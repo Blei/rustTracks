@@ -161,7 +161,7 @@ struct Track {
     name: ~str,
     performer: ~str,
     release_name: ~str,
-    year: Option<~str>,
+    year: Option<int>,
     track_file_stream_url: ~str,
     buy_link: ~str,
     faved_by_current_user: bool,
@@ -205,6 +205,7 @@ pub fn parse_play_token_response(json: &json::Json) -> Response<PlayToken> {
 
 pub fn parse_play_state_response(json: &json::Json) -> Response<PlayState> {
     let obj = expect_json_object(json);
+    debug!("play state json {}", json.to_str());
     let ps = PlayState::from_json(obj.find(&~"set").unwrap().clone());
     Response::from_json(json, ps)
 }

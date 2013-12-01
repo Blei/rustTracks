@@ -125,13 +125,6 @@ impl Gui {
                 ig.initialized = true;
             }
         });
-
-        // Quick test
-        let uri = "file:///home/philipp/music/Bon Iver/Bon Iver/03 - Holocene.mp3";
-        self.ig.read(|ig| {
-            ig.player.set_uri(uri);
-            ig.player.play();
-        });
     }
 
     pub fn run(&self) {

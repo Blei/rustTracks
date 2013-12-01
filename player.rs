@@ -162,7 +162,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         GST_MESSAGE_EOS => {
             println!("EOS from element {}", name);
         }
-        _ => println!("dropped bus message from element {}", name),
+        _ => debug!("dropped bus message from element {}", name),
     }
 
     // Returning 0 removes this callback
