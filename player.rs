@@ -47,6 +47,7 @@ impl Player {
     }
 
     pub fn set_uri(&self, uri: &str) {
+        self.stop();
         unsafe {
             "uri".with_c_str(|property_c_str| {
                 uri.with_c_str(|uri_c_str| {

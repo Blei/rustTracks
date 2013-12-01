@@ -30,6 +30,9 @@ pub static API_KEY: &'static str = "def2ba77d002afeec898674ede24fe10828ad8a5";
 
 pub struct ApiKey(~str);
 
+#[deriving(Clone)]
+pub struct PlayToken(~str);
+
 pub struct Response<T> {
     status: ~str,
     errors: Option<~str>,
@@ -50,7 +53,7 @@ impl <T> Response<T> {
             status: extract_from_json_object(obj, &~"status"),
             errors: maybe_extract_from_json_object(obj, &~"errors"),
             notices: maybe_extract_from_json_object(obj, &~"notices"),
-            logged_in: extract_from_json_object(obj, &~"logged_in"),
+            logged_in: maybe_extract_from_json_object(obj, &~"logged_in").unwrap_or(false),
             api_version: extract_from_json_object(obj, &~"api_version"),
             contents: contents,
         }
@@ -152,8 +155,56 @@ impl MixSet {
     }
 }
 
+#[deriving(Decodable)]
+struct Track {
+    id: uint,
+    name: ~str,
+    performer: ~str,
+    release_name: ~str,
+    year: Option<~str>,
+    track_file_stream_url: ~str,
+    buy_link: ~str,
+    faved_by_current_user: bool,
+    url: ~str,
+}
+
+impl Track {
+    pub fn from_json(json: json::Json) -> Track {
+        let mut decoder = json::Decoder::init(json);
+        Decodable::decode(&mut decoder)
+    }
+}
+
+#[deriving(Decodable)]
+struct PlayState {
+    at_beginning: bool,
+    at_last_track: bool,
+    at_end: bool,
+    skip_allowed: bool,
+    track: Track,
+}
+
+impl PlayState {
+    pub fn from_json(json: json::Json) -> PlayState {
+        let mut decoder = json::Decoder::init(json);
+        Decodable::decode(&mut decoder)
+    }
+}
+
 pub fn parse_mix_set_response(json: &json::Json) -> Response<MixSet> {
     let obj = expect_json_object(json);
     let mix_set = MixSet::from_json(obj.find(&~"mix_set").unwrap());
     Response::from_json(json, mix_set)
+}
+
+pub fn parse_play_token_response(json: &json::Json) -> Response<PlayToken> {
+    let obj = expect_json_object(json);
+    let pt = PlayToken(extract_from_json_object(obj, &~"play_token"));
+    Response::from_json(json, pt)
+}
+
+pub fn parse_play_state_response(json: &json::Json) -> Response<PlayState> {
+    let obj = expect_json_object(json);
+    let ps = PlayState::from_json(obj.find(&~"set").unwrap().clone());
+    Response::from_json(json, ps)
 }
