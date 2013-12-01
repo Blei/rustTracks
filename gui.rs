@@ -2,7 +2,6 @@ use std::cast;
 use std::mem;
 use std::ptr;
 use std::rt::comm;
-use std::task;
 
 use extra::arc::RWArc;
 
@@ -43,6 +42,7 @@ pub struct Gui {
 
 impl Drop for Gui {
     fn drop(&mut self) {
+        self.quit();
         if self.gui_g_source != ptr::mut_null() {
             unsafe {
                 g_source_unref(cast::transmute::<*mut GuiGSource, *mut GSource>(self.gui_g_source));
@@ -119,9 +119,10 @@ impl Gui {
         });
     }
 
-    pub fn start(&self) {
-        self.ig.write(|ig| {
-            if !ig.running {
+    pub fn run(&self) {
+        let needs_run = self.ig.write(|ig| {
+            let needs_run = !ig.running;
+            if needs_run {
                 ig.running = true;
                 unsafe {
                     gtk_widget_show_all(ig.main_window);
@@ -129,18 +130,20 @@ impl Gui {
                     g_source_attach(cast::transmute::<*mut GuiGSource, *mut GSource>(self.gui_g_source),
                                     context);
                 }
-                do task::spawn_sched(task::SingleThreaded) {
-                    unsafe {
-                        gtk_main();
-                    }
-                }
             }
+            needs_run
         });
+        if needs_run {
+            unsafe {
+                gtk_main();
+            }
+        }
     }
 
     pub fn quit(&self) {
         self.ig.write(|ig| {
             if ig.initialized {
+                ig.player.stop();
                 if ig.main_window != ptr::mut_null() {
                     unsafe {
                         gtk_widget_destroy(ig.main_window);
