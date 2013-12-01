@@ -1,5 +1,5 @@
 RUSTC ?= rustc
-LIBS = `pkg-config --libs gtk+-3.0 gstreamer-0.10`
+LIBS = `pkg-config --libs gtk+-3.0 gstreamer-1.0`
 RUSTC_FLAGS = -Z debug-info -Z extra-debug-info --opt-level=0
 
 rusttracks: main.rs api.rs webinterface.rs gui.rs player.rs
