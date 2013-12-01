@@ -7,7 +7,7 @@ fn maybe_extract_from_json_object<T: Decodable<json::Decoder>>(
         Some(s) => s.clone(),
         None => return None,
     };
-    let mut decoder = json::Decoder(found);
+    let mut decoder = json::Decoder::init(found);
     Decodable::decode(&mut decoder)
 }
 
@@ -72,7 +72,7 @@ pub struct CoverUrls {
 
 impl CoverUrls {
     pub fn from_json(json: json::Json) -> CoverUrls {
-        let mut decoder = json::Decoder(json);
+        let mut decoder = json::Decoder::init(json);
         Decodable::decode(&mut decoder)
     }
 }
