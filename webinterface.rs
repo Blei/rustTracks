@@ -21,6 +21,11 @@ pub fn make_play_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
                      **pt, mix.id)).unwrap()
 }
 
+pub fn make_report_url(pt: &api::PlayToken, track_id: uint, mix_id: uint) -> url::Url {
+    from_str(format!("http://8tracks.com/sets/{}/report.json?track_id={}&mix_id={}",
+        **pt, track_id, mix_id)).unwrap()
+}
+
 fn get_json_from_url(url: url::Url) -> json::Json {
     let mut request = RequestWriter::new(Get, url);
     request.headers.insert(ExtensionHeader(~"X-Api-Key", api::API_KEY.to_str()));
@@ -43,4 +48,10 @@ pub fn get_play_token() -> json::Json {
 
 pub fn get_play_state(pt: &api::PlayToken, mix: &api::Mix) -> json::Json {
     get_json_from_url(make_play_url(pt, mix))
+}
+
+/// Ignoring returned json, if it doesn't work, meh
+pub fn report_track(pt: &api::PlayToken, track_id: uint, mix_id: uint) {
+    let resp = get_json_from_url(make_report_url(pt, track_id, mix_id));
+    debug!("reported track, response was {}", resp.to_str());
 }

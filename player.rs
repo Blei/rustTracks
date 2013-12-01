@@ -1,6 +1,7 @@
 use std::cast;
 use std::ptr;
 use std::str::raw::from_c_str;
+use std::task;
 
 use gtk::*;
 use gtk::ffi::*;
@@ -11,6 +12,7 @@ struct Player {
     initialized: bool,
 
     playbin: *mut GstElement,
+    clock_id: Option<GstClockID>,
 }
 
 impl Player {
@@ -18,6 +20,7 @@ impl Player {
         Player {
             initialized: false,
             playbin: ptr::mut_null(),
+            clock_id: None,
         }
     }
 
@@ -46,7 +49,7 @@ impl Player {
         args2
     }
 
-    pub fn set_uri(&self, uri: &str) {
+    pub fn set_uri(&mut self, uri: &str, gui: &gui::Gui) {
         self.stop();
         unsafe {
             "uri".with_c_str(|property_c_str| {
@@ -55,6 +58,31 @@ impl Player {
                         property_c_str, uri_c_str, ptr::null::<gchar>());
                 });
             });
+
+            let chan = gui.get_chan().clone();
+
+            let clock = gst_pipeline_get_clock(cast::transmute(self.playbin));
+
+            // in nanoseconds
+            let timeout: guint64 = 30 * 1000 * 1000 * 1000;
+            let target_time = gst_clock_get_time(clock) + timeout;
+
+            let ci = gst_clock_new_single_shot_id(clock, target_time);
+            self.clock_id = Some(ci);
+
+            do task::spawn_sched(task::SingleThreaded) {
+                let res = gst_clock_id_wait(ci, ptr::mut_null());
+                match res {
+                    GST_CLOCK_UNSCHEDULED => { } // Ignore, nothing to do
+                    GST_CLOCK_OK => {
+                        println!("30s are up! sending ReportCurrentTrack to gui");
+                        chan.send(gui::ReportCurrentTrack);
+                    }
+                    _ => unreachable!()
+                }
+            }
+
+            gst_object_unref(cast::transmute(clock));
         }
     }
 
@@ -76,11 +104,16 @@ impl Player {
         }
     }
 
-    pub fn stop(&self) {
+    pub fn stop(&mut self) {
         if !self.initialized {
             fail!("player is not initialized");
         }
         unsafe {
+            let maybe_ci = self.clock_id.take();
+            for ci in maybe_ci.move_iter() {
+                gst_clock_id_unschedule(ci);
+                gst_clock_id_unref(ci);
+            }
             gst_element_set_state(self.playbin, GST_STATE_READY);
         }
     }
@@ -91,6 +124,7 @@ impl Drop for Player {
         if self.initialized {
             unsafe {
                 if !self.playbin.is_null() {
+                    gst_element_set_state(self.playbin, GST_STATE_NULL);
                     gst_object_unref(cast::transmute(self.playbin));
                 }
                 gst_deinit();

@@ -26,7 +26,8 @@ pub enum GuiUpdateMessage {
     GetMixes(~str),
     UpdateMixes(~[api::Mix]),
     PlayMix(uint),
-    SetUri(~str),
+    PlayTrack(api::Track),
+    ReportCurrentTrack,
 }
 
 struct InnerGui {
@@ -37,6 +38,9 @@ struct InnerGui {
 
     priv mixes: ~[api::Mix],
     priv play_token: Option<api::PlayToken>,
+
+    priv current_mix_index: Option<uint>,
+    priv current_track: Option<api::Track>,
 
     priv main_window: *mut GtkWidget,
     priv mixes_box: *mut GtkWidget,
@@ -74,6 +78,8 @@ impl Gui {
             player: player::Player::new(),
             mixes: ~[],
             play_token: None,
+            current_mix_index: None,
+            current_track: None,
             main_window: ptr::mut_null(),
             mixes_box: ptr::mut_null(),
         };
@@ -229,10 +235,11 @@ impl Gui {
 
     fn play_mix(&self, i: uint) {
         println!("playing mix with index {}", i);
-        self.ig.read(|ig| {
+        self.ig.write(|ig| {
             if i >= ig.mixes.len() {
                 println!("index is out of bounds, ignoring message");
             } else {
+                ig.current_mix_index = Some(i);
                 let mix = ig.mixes[i].clone();
                 println!("playing mix with name `{}`", mix.name);
                 let chan = self.chan.clone();
@@ -240,18 +247,34 @@ impl Gui {
                 do task::spawn_sched(task::SingleThreaded) {
                     let play_state_json = webinterface::get_play_state(&pt, &mix);
                     let play_state = api::parse_play_state_response(&play_state_json);
-                    chan.send(SetUri(play_state.contents.track.track_file_stream_url.clone()));
+                    chan.send(PlayTrack(play_state.contents.track));
                 }
             }
         });
     }
 
-    fn set_uri(&self, uri: ~str) {
-        println!("set uri to `{}`", uri);
-        self.ig.read(|ig| {
-            ig.player.set_uri(uri);
+    fn play_track(&self, track: api::Track) {
+        self.ig.write(|ig| {
+            println!("playing track `{}`", track.name);
+            ig.current_track = Some(track.clone());
+            println!("setting uri to `{}`", track.track_file_stream_url);
+            ig.player.set_uri(track.track_file_stream_url, self);
             ig.player.play();
         });
+    }
+
+    fn report_current_track(&self) {
+        println!("reporting current thread");
+        let (pt, ti, mi) = self.ig.read(|ig|
+            (
+                ig.play_token.get_ref().clone(),
+                ig.mixes[*ig.current_mix_index.get_ref()].id,
+                ig.current_track.get_ref().id,
+            )
+        );
+        do task::spawn_sched(task::SingleThreaded) {
+            webinterface::report_track(&pt, ti, mi);
+        }
     }
 
     /// This can only be called from one thread at a time, not
@@ -267,7 +290,8 @@ impl Gui {
             UpdateMixes(m) => self.set_mixes(m),
             GetMixes(s) => self.get_mixes(s),
             PlayMix(i) => self.play_mix(i),
-            SetUri(u) => self.set_uri(u),
+            PlayTrack(t) => self.play_track(t),
+            ReportCurrentTrack => self.report_current_track(),
         }
 
         return true;

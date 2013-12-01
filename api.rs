@@ -155,7 +155,7 @@ impl MixSet {
     }
 }
 
-#[deriving(Decodable)]
+#[deriving(Clone, Decodable)]
 struct Track {
     id: uint,
     name: ~str,
