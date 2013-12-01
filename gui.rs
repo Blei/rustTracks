@@ -84,7 +84,7 @@ impl Gui {
             if !ig.initialized {
                 unsafe {
                     let args2 = gtk_init_with_args(args.clone());
-                    let _args3 = ig.player.init(args2);
+                    let _args3 = ig.player.init(args2, self);
                     ig.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
                     gtk_window_set_default_size(cast::transmute(ig.main_window), 300, 400);
                     "destroy".with_c_str(|destroy| {
@@ -101,8 +101,7 @@ impl Gui {
 
                     ig.mixes_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
                     gtk_container_add(cast::transmute(scrolled_window), ig.mixes_box);
-                }
-                unsafe {
+
                     let g_source = g_source_new(cast::transmute(&self.g_source_funcs),
                                                 mem::size_of::<GuiGSource>() as u32);
                     self.gui_g_source = cast::transmute::<*mut GSource, *mut GuiGSource>(g_source);
@@ -110,6 +109,13 @@ impl Gui {
                 };
                 ig.initialized = true;
             }
+        });
+
+        // Quick test
+        let uri = "file:///home/philipp/music/Bon Iver/Bon Iver/03 - Holocene.mp3";
+        self.ig.read(|ig| {
+            ig.player.set_uri(uri);
+            ig.player.play();
         });
     }
 
