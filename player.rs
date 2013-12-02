@@ -11,6 +11,8 @@ use gui;
 struct Player {
     initialized: bool,
 
+    playing: bool,
+
     playbin: *mut GstElement,
     clock_id: Option<GstClockID>,
 }
@@ -19,6 +21,7 @@ impl Player {
     pub fn new() -> Player {
         Player {
             initialized: false,
+            playing: false,
             playbin: ptr::mut_null(),
             clock_id: None,
         }
@@ -86,22 +89,24 @@ impl Player {
         }
     }
 
-    pub fn play(&self) {
+    pub fn play(&mut self) {
         if !self.initialized {
             fail!("player is not initialized");
         }
         unsafe {
             gst_element_set_state(self.playbin, GST_STATE_PLAYING);
         }
+        self.playing = true;
     }
 
-    pub fn pause(&self) {
+    pub fn pause(&mut self) {
         if !self.initialized {
             fail!("player is not initialized");
         }
         unsafe {
             gst_element_set_state(self.playbin, GST_STATE_PAUSED);
         }
+        self.playing = false;
     }
 
     pub fn stop(&mut self) {
@@ -115,6 +120,15 @@ impl Player {
                 gst_clock_id_unref(ci);
             }
             gst_element_set_state(self.playbin, GST_STATE_READY);
+        }
+        self.playing = false;
+    }
+
+    pub fn toggle(&mut self) {
+        if self.playing {
+            self.pause()
+        } else {
+            self.play()
         }
     }
 }

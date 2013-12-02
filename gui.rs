@@ -28,6 +28,7 @@ pub enum GuiUpdateMessage {
     PlayMix(uint),
     PlayTrack(api::Track),
     ReportCurrentTrack,
+    TogglePlaying,
     NextTrack,
 }
 
@@ -116,10 +117,22 @@ impl Gui {
                                          cast::transmute::<&Gui, gpointer>(self));
                     });
 
+                    let main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+                    gtk_container_add(cast::transmute(ig.main_window), main_box);
+
+                    let toggle_button = "Toggle".with_c_str(|t| gtk_button_new_with_label(t));
+                    "clicked".with_c_str(|clicked| {
+                        g_signal_connect(cast::transmute(toggle_button),
+                                         clicked,
+                                         cast::transmute(toggle_button_clicked),
+                                         cast::transmute::<&Gui, gpointer>(self));
+                    });
+                    gtk_box_pack_start(cast::transmute(main_box), toggle_button, 0, 0, 0);
+
                     let scrolled_window = gtk_scrolled_window_new(ptr::mut_null(), ptr::mut_null());
                     gtk_scrolled_window_set_policy(cast::transmute(scrolled_window),
                         GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-                    gtk_container_add(cast::transmute(ig.main_window), scrolled_window);
+                    gtk_box_pack_start(cast::transmute(main_box), scrolled_window, 1, 1, 0);
 
                     ig.mixes_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
                     gtk_container_add(cast::transmute(scrolled_window), ig.mixes_box);
@@ -278,6 +291,11 @@ impl Gui {
         }
     }
 
+    fn toggle_playing(&self) {
+        println!("toggling!");
+        self.ig.write(|ig| ig.player.toggle() );
+    }
+
     fn next_track(&self) {
         self.ig.write(|ig| {
             ig.player.stop();
@@ -311,6 +329,7 @@ impl Gui {
             PlayMix(i) => self.play_mix(i),
             PlayTrack(t) => self.play_track(t),
             ReportCurrentTrack => self.report_current_track(),
+            TogglePlaying => self.toggle_playing(),
             NextTrack => self.next_track(),
         }
 
@@ -397,5 +416,12 @@ extern "C" fn play_button_clicked(_button: *GtkButton, user_data: gpointer) {
     let &(gui_ptr, i): &(*Gui, uint) = cast::transmute(user_data);
     let gui = &*gui_ptr;
     gui.get_chan().send(PlayMix(i));
+    }
+}
+
+extern "C" fn toggle_button_clicked(_button: *GtkButton, user_data: gpointer) {
+    unsafe {
+    let gui: &Gui = cast::transmute(user_data);
+    gui.get_chan().send(TogglePlaying);
     }
 }
