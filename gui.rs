@@ -197,11 +197,11 @@ impl Gui {
 
     fn fetch_play_token(&self) {
         if self.ig.read(|ig| ig.play_token.is_some()) {
-            println!("play token already exists, ignoring request");
+            debug!("play token already exists, ignoring request");
             return;
         }
 
-        println!("fetching play token");
+        debug!("fetching play token");
         let chan = self.chan.clone();
         do task::spawn_sched(task::SingleThreaded) {
             let pt_json = webinterface::get_play_token();
@@ -211,7 +211,7 @@ impl Gui {
     }
 
     fn set_play_token(&self, pt: api::PlayToken) {
-        println!("setting play token to `{}`", *pt);
+        debug!("setting play token to `{}`", *pt);
         self.ig.write(|ig| {
             ig.play_token = Some(pt.clone());
         });
@@ -224,7 +224,7 @@ impl Gui {
         self.ig.write(|ig| {
             // TODO why is this clone necessary?? blerg, once functions?
             ig.mixes = mixes.clone();
-            println!("setting mixes, length {}", ig.mixes.len());
+            debug!("setting mixes, length {}", ig.mixes.len());
             unsafe {
                 clear_gtk_container(cast::transmute(ig.mixes_box));
                 for i in iter::range(0, mixes.len()) {
@@ -238,7 +238,7 @@ impl Gui {
     }
 
     fn get_mixes(&self, smart_id: ~str) {
-        println!("getting mixes for smart id '{}'", smart_id);
+        debug!("getting mixes for smart id '{}'", smart_id);
         let chan = self.get_chan().clone();
         do task::spawn_sched(task::SingleThreaded) {
             let mix_set_json = webinterface::get_mix_set(smart_id);
@@ -248,14 +248,14 @@ impl Gui {
     }
 
     fn play_mix(&self, i: uint) {
-        println!("playing mix with index {}", i);
+        debug!("playing mix with index {}", i);
         self.ig.write(|ig| {
             if i >= ig.mixes.len() {
-                println!("index is out of bounds, ignoring message");
+                warn!("index is out of bounds, ignoring message");
             } else {
                 ig.current_mix_index = Some(i);
                 let mix = ig.mixes[i].clone();
-                println!("playing mix with name `{}`", mix.name);
+                debug!("playing mix with name `{}`", mix.name);
                 let chan = self.chan.clone();
                 let pt = ig.play_token.get_ref().clone();
                 do task::spawn_sched(task::SingleThreaded) {
@@ -269,16 +269,16 @@ impl Gui {
 
     fn play_track(&self, track: api::Track) {
         self.ig.write(|ig| {
-            println!("playing track `{}`", track.name);
+            debug!("playing track `{}`", track.name);
             ig.current_track = Some(track.clone());
-            println!("setting uri to `{}`", track.track_file_stream_url);
+            debug!("setting uri to `{}`", track.track_file_stream_url);
             ig.player.set_uri(track.track_file_stream_url, self);
             ig.player.play();
         });
     }
 
     fn report_current_track(&self) {
-        println!("reporting current thread");
+        debug!("reporting current track");
         let (pt, ti, mi) = self.ig.read(|ig|
             (
                 ig.play_token.get_ref().clone(),
@@ -292,7 +292,7 @@ impl Gui {
     }
 
     fn toggle_playing(&self) {
-        println!("toggling!");
+        debug!("toggling!");
         self.ig.write(|ig| ig.player.toggle() );
     }
 
@@ -303,7 +303,7 @@ impl Gui {
 
             let i = ig.current_mix_index.unwrap();
             let mix = ig.mixes[i].clone();
-            println!("getting next track of mix with name `{}`", mix.name);
+            debug!("getting next track of mix with name `{}`", mix.name);
             let chan = self.chan.clone();
             let pt = ig.play_token.get_ref().clone();
             do task::spawn_sched(task::SingleThreaded) {

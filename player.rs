@@ -78,7 +78,7 @@ impl Player {
                 match res {
                     GST_CLOCK_UNSCHEDULED => { } // Ignore, nothing to do
                     GST_CLOCK_OK => {
-                        println!("30s are up! sending ReportCurrentTrack to gui");
+                        debug!("30s are up! sending ReportCurrentTrack to gui");
                         chan.send(gui::ReportCurrentTrack);
                     }
                     _ => unreachable!()
@@ -174,44 +174,54 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
 
             gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-            println!("ERROR from element {}: {}", name,
+            error!("ERROR from element {}: {}", name,
                 from_c_str(cast::transmute_immut_unsafe((*err).message)));
-            println!("Debugging info: {}", from_c_str(cast::transmute_immut_unsafe(dbg_info)));
+            error!("Debugging info: {}", from_c_str(cast::transmute_immut_unsafe(dbg_info)));
 
             g_error_free(err);
             g_free(cast::transmute(dbg_info));
         }
         GST_MESSAGE_WARNING => {
-            let mut err = ptr::mut_null();
-            let mut dbg_info = ptr::mut_null();
+            if warn_enabled!() {
+                let mut err = ptr::mut_null();
+                let mut dbg_info = ptr::mut_null();
 
-            gst_message_parse_error(msg, &mut err, &mut dbg_info);
+                gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-            println!("WARNING from element {}: {}", name,
-                from_c_str(cast::transmute_immut_unsafe((*err).message)));
-            println!("Debugging info: {}", from_c_str(cast::transmute_immut_unsafe(dbg_info)));
+                warn!("WARNING from element {}: {}", name,
+                    from_c_str(cast::transmute_immut_unsafe((*err).message)));
+                warn!("Debugging info: {}", from_c_str(cast::transmute_immut_unsafe(dbg_info)));
 
-            g_error_free(err);
-            g_free(cast::transmute(dbg_info));
+                g_error_free(err);
+                g_free(cast::transmute(dbg_info));
+            }
         }
         GST_MESSAGE_INFO => {
-            let mut err = ptr::mut_null();
-            let mut dbg_info = ptr::mut_null();
+            if info_enabled!() {
+                let mut err = ptr::mut_null();
+                let mut dbg_info = ptr::mut_null();
 
-            gst_message_parse_error(msg, &mut err, &mut dbg_info);
+                gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-            println!("INFO from element {}: {}", name,
-                from_c_str(cast::transmute_immut_unsafe((*err).message)));
-            println!("Debugging info: {}", from_c_str(cast::transmute_immut_unsafe(dbg_info)));
+                info!("INFO from element {}: {}", name,
+                    from_c_str(cast::transmute_immut_unsafe((*err).message)));
+                info!("Debugging info: {}", from_c_str(cast::transmute_immut_unsafe(dbg_info)));
 
-            g_error_free(err);
-            g_free(cast::transmute(dbg_info));
+                g_error_free(err);
+                g_free(cast::transmute(dbg_info));
+            }
         }
         GST_MESSAGE_EOS => {
-            println!("EOS from element {}", name);
+            debug!("EOS from element {}", name);
             gui.get_chan().send(gui::NextTrack);
         }
-        _ => debug!("dropped bus message from element {}", name),
+        _ => {
+            if debug_enabled!() {
+                let msg_type_cstr = gst_message_type_get_name((*msg)._type);
+                let msg_type_name = ::std::str::raw::from_c_str(msg_type_cstr);
+                debug!("message of type `{}` from element `{}`", msg_type_name, name);
+            }
+        }
     }
 
     // Returning 0 removes this callback
