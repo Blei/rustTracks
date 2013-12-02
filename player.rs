@@ -135,7 +135,7 @@ impl Drop for Player {
 
 extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpointer) -> gboolean {
     unsafe {
-    let _gui: &gui::Gui = cast::transmute(data);
+    let gui: &gui::Gui = cast::transmute(data);
 
     let name = {
         let gst_obj = (*msg).src;
@@ -195,6 +195,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         }
         GST_MESSAGE_EOS => {
             println!("EOS from element {}", name);
+            gui.get_chan().send(gui::NextTrack);
         }
         _ => debug!("dropped bus message from element {}", name),
     }

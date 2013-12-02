@@ -28,6 +28,7 @@ pub enum GuiUpdateMessage {
     PlayMix(uint),
     PlayTrack(api::Track),
     ReportCurrentTrack,
+    NextTrack,
 }
 
 struct InnerGui {
@@ -277,6 +278,24 @@ impl Gui {
         }
     }
 
+    fn next_track(&self) {
+        self.ig.write(|ig| {
+            ig.player.stop();
+            ig.current_track = None;
+
+            let i = ig.current_mix_index.unwrap();
+            let mix = ig.mixes[i].clone();
+            println!("getting next track of mix with name `{}`", mix.name);
+            let chan = self.chan.clone();
+            let pt = ig.play_token.get_ref().clone();
+            do task::spawn_sched(task::SingleThreaded) {
+                let next_track_json = webinterface::get_next_track(&pt, &mix);
+                let play_state = api::parse_play_state_response(&next_track_json);
+                chan.send(PlayTrack(play_state.contents.track));
+            }
+        });
+    }
+
     /// This can only be called from one thread at a time, not
     /// synchronized!!
     pub fn dispatch_message(&mut self) -> bool {
@@ -292,6 +311,7 @@ impl Gui {
             PlayMix(i) => self.play_mix(i),
             PlayTrack(t) => self.play_track(t),
             ReportCurrentTrack => self.report_current_track(),
+            NextTrack => self.next_track(),
         }
 
         return true;

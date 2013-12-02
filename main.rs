@@ -14,7 +14,7 @@ pub fn main() {
     gui.init(std::os::args());
 
     gui.get_chan().send(gui::FetchPlayToken);
-    gui.get_chan().send(gui::GetMixes(~"all"));
+    gui.get_chan().send(gui::GetMixes(~"tags:folk"));
 
     gui.run();
 }

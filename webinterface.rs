@@ -21,6 +21,11 @@ pub fn make_play_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
                      **pt, mix.id)).unwrap()
 }
 
+pub fn make_next_track_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
+    from_str(format!("http://8tracks.com/sets/{}/next.json?mix_id={}",
+                     **pt, mix.id)).unwrap()
+}
+
 pub fn make_report_url(pt: &api::PlayToken, track_id: uint, mix_id: uint) -> url::Url {
     from_str(format!("http://8tracks.com/sets/{}/report.json?track_id={}&mix_id={}",
         **pt, track_id, mix_id)).unwrap()
@@ -48,6 +53,10 @@ pub fn get_play_token() -> json::Json {
 
 pub fn get_play_state(pt: &api::PlayToken, mix: &api::Mix) -> json::Json {
     get_json_from_url(make_play_url(pt, mix))
+}
+
+pub fn get_next_track(pt: &api::PlayToken, mix: &api::Mix) -> json::Json {
+    get_json_from_url(make_next_track_url(pt, mix))
 }
 
 /// Ignoring returned json, if it doesn't work, meh
