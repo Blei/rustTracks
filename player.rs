@@ -1,4 +1,5 @@
 use std::cast;
+use std::logging;
 use std::ptr;
 use std::str::raw::from_c_str;
 use std::task;
@@ -182,7 +183,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             g_free(cast::transmute(dbg_info));
         }
         GST_MESSAGE_WARNING => {
-            if warn_enabled!() {
+            if log_enabled!(logging::WARN) {
                 let mut err = ptr::mut_null();
                 let mut dbg_info = ptr::mut_null();
 
@@ -197,7 +198,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             }
         }
         GST_MESSAGE_INFO => {
-            if info_enabled!() {
+            if log_enabled!(logging::INFO) {
                 let mut err = ptr::mut_null();
                 let mut dbg_info = ptr::mut_null();
 
@@ -216,7 +217,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             gui.get_chan().send(gui::NextTrack);
         }
         _ => {
-            if debug_enabled!() {
+            if log_enabled!(logging::DEBUG) {
                 let msg_type_cstr = gst_message_type_get_name((*msg)._type);
                 let msg_type_name = ::std::str::raw::from_c_str(msg_type_cstr);
                 debug!("message of type `{}` from element `{}`", msg_type_name, name);
