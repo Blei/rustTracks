@@ -12,6 +12,7 @@ use gui;
 struct Player {
     initialized: bool,
 
+    uri_set: bool,
     playing: bool,
 
     playbin: *mut GstElement,
@@ -22,6 +23,7 @@ impl Player {
     pub fn new() -> Player {
         Player {
             initialized: false,
+            uri_set: false,
             playing: false,
             playbin: ptr::mut_null(),
             clock_id: None,
@@ -88,11 +90,16 @@ impl Player {
 
             gst_object_unref(cast::transmute(clock));
         }
+        self.uri_set = true;
     }
 
     pub fn play(&mut self) {
         if !self.initialized {
             fail!("player is not initialized");
+        }
+        if !self.uri_set {
+            debug!("uri not set, not playing");
+            return;
         }
         unsafe {
             gst_element_set_state(self.playbin, GST_STATE_PLAYING);
@@ -122,6 +129,7 @@ impl Player {
             }
             gst_element_set_state(self.playbin, GST_STATE_READY);
         }
+        self.uri_set = false;
         self.playing = false;
     }
 
@@ -131,6 +139,14 @@ impl Player {
         } else {
             self.play()
         }
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    pub fn can_play(&self) -> bool {
+        self.uri_set
     }
 }
 
