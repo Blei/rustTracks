@@ -66,10 +66,13 @@ impl MixEntry {
             gdk_pixbuf_unref(pixbuf2);
             gtk_box_pack_end(cast::transmute(box), image, 0, 0, 0);
 
+            let button_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+            gtk_box_pack_end(cast::transmute(box), button_box, 0, 0, 0);
+
             let button = "Play".with_c_str(|p| {
                 gtk_button_new_with_label(p)
             });
-            gtk_box_pack_end(cast::transmute(box), button, 0, 0, 0);
+            gtk_box_pack_end(cast::transmute(button_box), button, 1, 0, 0);
             "clicked".with_c_str(|c| {
                 g_signal_connect(cast::transmute(button),
                                  c,
