@@ -15,6 +15,8 @@ use api;
 use player;
 use webinterface;
 
+static eigthtracks_icon_filename: &'static str = "8tracks-icon.jpg";
+
 struct GuiGSource {
     g_source: GSource,
     gui_ptr: *Gui,
@@ -37,32 +39,51 @@ struct MixEntry {
     mix: api::Mix,
 
     widget: *mut GtkWidget,
+    image: *mut GtkWidget,
 }
 
 impl MixEntry {
     fn new(mix: api::Mix, mix_table_entry: &(*mut Gui, uint)) -> MixEntry {
-        let widget = unsafe {
+        let (widget, image) = unsafe {
             let box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+
             let label = mix.name.with_c_str(|c_str| {
                 gtk_label_new(c_str)
             });
-            gtk_container_add(cast::transmute(box), label);
+            gtk_box_pack_start(cast::transmute(box), label, 1, 1, 0);
+            gtk_label_set_line_wrap(label as *mut GtkLabel, 1);
+            gtk_label_set_line_wrap_mode(label as *mut GtkLabel, PANGO_WRAP_WORD_CHAR);
+            gtk_misc_set_alignment(label as *mut GtkMisc, 0f32, 0.5f32);
+
+
+            let pixbuf1 = eigthtracks_icon_filename.with_c_str(|cstr| {
+                let mut err = ptr::mut_null();
+                gdk_pixbuf_new_from_file(cstr, &mut err)
+            });
+            let pixbuf2 = gdk_pixbuf_scale_simple(&*pixbuf1, 133, 133, GDK_INTERP_BILINEAR);
+            gdk_pixbuf_unref(pixbuf1);
+            let image = gtk_image_new_from_pixbuf(pixbuf2);
+            gdk_pixbuf_unref(pixbuf2);
+            gtk_box_pack_end(cast::transmute(box), image, 0, 0, 0);
+
             let button = "Play".with_c_str(|p| {
                 gtk_button_new_with_label(p)
             });
-            gtk_container_add(cast::transmute(box), button);
+            gtk_box_pack_end(cast::transmute(box), button, 0, 0, 0);
             "clicked".with_c_str(|c| {
                 g_signal_connect(cast::transmute(button),
                                  c,
                                  cast::transmute(play_button_clicked),
                                  cast::transmute::<&(*mut Gui, uint), gpointer>(mix_table_entry));
             });
-            box
+
+            (box, image)
         };
 
         MixEntry {
             mix: mix,
             widget: widget,
+            image: image,
         }
     }
 }
