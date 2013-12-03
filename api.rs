@@ -160,7 +160,7 @@ struct Track {
     id: uint,
     name: ~str,
     performer: ~str,
-    release_name: ~str,
+    release_name: Option<~str>,
     year: Option<int>,
     track_file_stream_url: ~str,
     buy_link: ~str,
