@@ -40,6 +40,7 @@ pub enum GuiUpdateMessage {
     NextTrack,
     SkipTrack,
     SetPic(uint, ~[u8]),
+    SetProgress(Option<(i64, i64)>),
 }
 
 #[deriving(Clone)]
@@ -239,6 +240,10 @@ impl Gui {
 
                     ig.progress_bar = gtk_progress_bar_new();
                     gtk_box_pack_end(cast::transmute(control_box), ig.progress_bar, 1, 1, 0);
+                    "".with_c_str(|cstr|
+                        gtk_progress_bar_set_text(cast::transmute(ig.progress_bar), cstr)
+                    );
+                    gtk_progress_bar_set_show_text(cast::transmute(ig.progress_bar), 1);
 
                     ig.control_buttons_set_sensitive(false);
 
@@ -482,6 +487,36 @@ impl Gui {
         }
     }
 
+    fn set_progress(&self, progress: Option<(i64, i64)>) {
+        debug!("setting progress to {:?}", progress);
+        self.ig.write(|ig| {
+            match progress {
+                Some((pos, dur)) => {
+                    let fraction = (pos as f64) / ((dur - 1) as f64);
+                    let pos_sec = pos / 1000000000;
+                    let dur_sec = dur / 1000000000;
+                    let text = format!("{}:{:02d} / {}:{:02d}",
+                                       pos_sec / 60, pos_sec % 60,
+                                       dur_sec / 60, dur_sec % 60);
+                    unsafe {
+                        text.with_c_str(|cstr|
+                            gtk_progress_bar_set_text(cast::transmute(ig.progress_bar), cstr)
+                        );
+                        gtk_progress_bar_set_fraction(cast::transmute(ig.progress_bar), fraction);
+                    }
+                }
+                None => {
+                    unsafe {
+                        "".with_c_str(|cstr|
+                            gtk_progress_bar_set_text(cast::transmute(ig.progress_bar), cstr)
+                        );
+                        gtk_progress_bar_set_fraction(cast::transmute(ig.progress_bar), 0.);
+                    }
+                }
+            }
+        });
+    }
+
     /// This can only be called from one thread at a time, not
     /// synchronized!!
     pub fn dispatch_message(&mut self) -> bool {
@@ -501,6 +536,7 @@ impl Gui {
             NextTrack => self.next_track(),
             SkipTrack => self.skip_track(),
             SetPic(i, d) => self.set_pic(i, d),
+            SetProgress(p) => self.set_progress(p),
         }
 
         return true;

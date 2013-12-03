@@ -9,6 +9,25 @@ use gtk::ffi::*;
 
 use gui;
 
+struct ClockIDWrapper {
+    ci: GstClockID,
+}
+
+impl ClockIDWrapper {
+    fn new(ci: GstClockID) -> ClockIDWrapper {
+        ClockIDWrapper { ci: ci }
+    }
+}
+
+impl Drop for ClockIDWrapper {
+    fn drop(&mut self) {
+        unsafe {
+            gst_clock_id_unschedule(self.ci);
+            gst_clock_id_unref(self.ci);
+        }
+    }
+}
+
 struct Player {
     initialized: bool,
 
@@ -16,7 +35,8 @@ struct Player {
     playing: bool,
 
     playbin: *mut GstElement,
-    clock_id: Option<GstClockID>,
+    report_clock_id: Option<ClockIDWrapper>,
+    progress_clock_id: Option<ClockIDWrapper>,
 }
 
 impl Player {
@@ -26,7 +46,8 @@ impl Player {
             uri_set: false,
             playing: false,
             playbin: ptr::mut_null(),
-            clock_id: None,
+            report_clock_id: None,
+            progress_clock_id: None,
         }
     }
 
@@ -64,8 +85,17 @@ impl Player {
                         property_c_str, uri_c_str, ptr::null::<gchar>());
                 });
             });
+        }
 
-            let chan = gui.get_chan().clone();
+        self.start_report_watch(gui);
+        self.start_progress_watch(gui);
+
+        self.uri_set = true;
+    }
+
+    fn start_report_watch(&mut self, gui: &gui::Gui) {
+        let chan = gui.get_chan().clone();
+        unsafe {
 
             let clock = gst_pipeline_get_clock(cast::transmute(self.playbin));
 
@@ -74,7 +104,7 @@ impl Player {
             let target_time = gst_clock_get_time(clock) + timeout;
 
             let ci = gst_clock_new_single_shot_id(clock, target_time);
-            self.clock_id = Some(ci);
+            self.report_clock_id = Some(ClockIDWrapper::new(ci));
 
             do task::spawn_sched(task::SingleThreaded) {
                 let res = gst_clock_id_wait(ci, ptr::mut_null());
@@ -90,7 +120,52 @@ impl Player {
 
             gst_object_unref(cast::transmute(clock));
         }
-        self.uri_set = true;
+    }
+
+    fn start_progress_watch(&mut self, gui: &gui::Gui) {
+        let chan = gui.get_chan().clone();
+        unsafe {
+
+            let clock = gst_pipeline_get_clock(cast::transmute(self.playbin));
+
+            // in nanoseconds
+            let period: guint64 = 1 * 1000 * 1000 * 1000;
+            let target_time = gst_clock_get_time(clock) + period;
+
+            let ci = gst_clock_new_periodic_id(clock, target_time, period);
+            self.progress_clock_id = Some(ClockIDWrapper::new(ci));
+
+            let playbin = self.playbin;
+            do task::spawn_sched(task::SingleThreaded) {
+                loop {
+                    let res = gst_clock_id_wait(ci, ptr::mut_null());
+                    match res {
+                        GST_CLOCK_UNSCHEDULED => {
+                            // Track has ended or whatever, stop polling
+                            break;
+                        }
+                        GST_CLOCK_OK => {
+                            debug!("1s is up! sending progress");
+                            let mut current_position = 0;
+                            let success_position = gst_element_query_position(
+                                playbin, GST_FORMAT_TIME, &mut current_position);
+                            let mut current_duration = 0;
+                            let success_duration = gst_element_query_duration(
+                                playbin, GST_FORMAT_TIME, &mut current_duration);
+
+                            if success_duration != 0 && success_position != 0 {
+                                chan.send(gui::SetProgress(Some((current_position, current_duration))));
+                            } else {
+                                chan.send(gui::SetProgress(None));
+                            }
+                        }
+                        _ => unreachable!()
+                    }
+                }
+            }
+
+            gst_object_unref(cast::transmute(clock));
+        }
     }
 
     pub fn play(&mut self) {
@@ -121,12 +196,9 @@ impl Player {
         if !self.initialized {
             fail!("player is not initialized");
         }
-        unsafe {
-            let maybe_ci = self.clock_id.take();
-            for ci in maybe_ci.move_iter() {
-                gst_clock_id_unschedule(ci);
-                gst_clock_id_unref(ci);
-            }
+        self.report_clock_id = None;
+        self.progress_clock_id = None;
+        unsafe{
             gst_element_set_state(self.playbin, GST_STATE_READY);
         }
         self.uri_set = false;
