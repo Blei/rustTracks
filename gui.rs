@@ -456,7 +456,22 @@ impl Gui {
     }
 
     fn skip_track(&self) {
-        println!("TODO");
+        self.ig.write(|ig| {
+            ig.player.stop();
+            ig.current_track = None;
+            ig.control_buttons_set_sensitive(false);
+
+            let i = ig.current_mix_index.unwrap();
+            let mix = ig.mix_entries[i].mix.clone();
+            debug!("skipping track of mix with name `{}`", mix.name);
+            let chan = self.chan.clone();
+            let pt = ig.play_token.get_ref().clone();
+            do task::spawn_sched(task::SingleThreaded) {
+                let skip_track_json = webinterface::get_skip_track(&pt, &mix);
+                let play_state = api::parse_play_state_response(&skip_track_json);
+                chan.send(PlayTrack(play_state.contents.track));
+            }
+        });
     }
 
     fn set_pic(&self, i: uint, mut pic_data: ~[u8]) {
