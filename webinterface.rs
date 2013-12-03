@@ -31,7 +31,12 @@ pub fn make_report_url(pt: &api::PlayToken, track_id: uint, mix_id: uint) -> url
         **pt, track_id, mix_id)).unwrap()
 }
 
-fn get_json_from_url(url: url::Url) -> json::Json {
+pub fn get_data_from_url_str(s: &str) -> ~[u8] {
+    let url = from_str(s).unwrap();
+    get_data_from_url(url)
+}
+
+fn get_data_from_url(url: url::Url) -> ~[u8] {
     let mut request = RequestWriter::new(Get, url);
     request.headers.insert(ExtensionHeader(~"X-Api-Key", api::API_KEY.to_str()));
     request.headers.insert(ExtensionHeader(~"X-Api-Version", api::API_VERSION.to_str()));
@@ -39,8 +44,12 @@ fn get_json_from_url(url: url::Url) -> json::Json {
         Ok(response) => response,
         Err(_) => fail!("failed to get mixes"),
     };
-    let body = response.read_to_end();
-    json::from_str(str::from_utf8_slice(body)).unwrap()
+    response.read_to_end()
+}
+
+fn get_json_from_url(url: url::Url) -> json::Json {
+    let data = get_data_from_url(url);
+    json::from_str(str::from_utf8_owned(data)).unwrap()
 }
 
 pub fn get_mix_set(smart_id: &str) -> json::Json {

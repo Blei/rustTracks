@@ -1,10 +1,12 @@
 use std::cast;
 use std::iter;
+use std::libc;
 use std::mem;
 use std::ptr;
 use std::rt::comm;
 use std::task;
 use std::vec;
+use vecraw = std::vec::raw;
 
 use extra::arc::RWArc;
 
@@ -32,6 +34,7 @@ pub enum GuiUpdateMessage {
     ReportCurrentTrack,
     TogglePlaying,
     NextTrack,
+    SetPic(uint, ~[u8]),
 }
 
 #[deriving(Clone)]
@@ -39,7 +42,7 @@ struct MixEntry {
     mix: api::Mix,
 
     widget: *mut GtkWidget,
-    image: *mut GtkWidget,
+    image: *mut GtkImage,
 }
 
 impl MixEntry {
@@ -80,13 +83,21 @@ impl MixEntry {
                                  cast::transmute::<&(*mut Gui, uint), gpointer>(mix_table_entry));
             });
 
-            (box, image)
+            (box, image as *mut GtkImage)
         };
 
         MixEntry {
             mix: mix,
             widget: widget,
             image: image,
+        }
+    }
+
+    // &mut is not strictly required, but kind of makes sense.
+    // This is a "safe" interface after all
+    fn set_pic(&mut self, pixbuf: *mut GdkPixbuf) {
+        unsafe {
+            gtk_image_set_from_pixbuf(self.image, pixbuf);
         }
     }
 }
@@ -179,7 +190,7 @@ impl Gui {
                     let args2 = gtk_init_with_args(args.clone());
                     let _args3 = ig.player.init(args2, self);
                     ig.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-                    gtk_window_set_default_size(cast::transmute(ig.main_window), 300, 400);
+                    gtk_window_set_default_size(cast::transmute(ig.main_window), 400, 500);
                     "destroy".with_c_str(|destroy| {
                         g_signal_connect(cast::transmute(ig.main_window),
                                          destroy,
@@ -302,6 +313,14 @@ impl Gui {
                     gtk_box_pack_end(cast::transmute(ig.mixes_box),
                         mix_entry.widget, 0, 1, 0);
                     ig.mix_entries.push(mix_entry);
+
+                    // Fetch cover pic
+                    let chan = self.chan.clone();
+                    let pic_url_str = mixes[i].cover_urls.sq133.clone();
+                    do task::spawn_sched(task::SingleThreaded) {
+                        let pic_data = webinterface::get_data_from_url_str(pic_url_str);
+                        chan.send(SetPic(i, pic_data));
+                    }
                 }
                 gtk_widget_show_all(ig.mixes_box);
             }
@@ -387,6 +406,34 @@ impl Gui {
         });
     }
 
+    fn set_pic(&self, i: uint, mut pic_data: ~[u8]) {
+        let pixbuf = unsafe {
+            let mut err = ptr::mut_null();
+
+            let stream = g_memory_input_stream_new_from_data(
+                vecraw::to_mut_ptr(pic_data) as *libc::c_void,
+                pic_data.len() as i64, cast::transmute(0));
+            let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
+
+            g_input_stream_close(stream, ptr::mut_null(), &mut err);
+            pixbuf
+        };
+
+        self.ig.write(|ig| {
+            if i >= ig.mix_entries.len() {
+                warn!("set_pic: index {} is out of range, only {} mix_entries",
+                      i, ig.mix_entries.len());
+            } else {
+                ig.mix_entries[i].set_pic(pixbuf);
+            }
+        });
+
+
+        unsafe {
+            gdk_pixbuf_unref(pixbuf);
+        }
+    }
+
     /// This can only be called from one thread at a time, not
     /// synchronized!!
     pub fn dispatch_message(&mut self) -> bool {
@@ -404,6 +451,7 @@ impl Gui {
             ReportCurrentTrack => self.report_current_track(),
             TogglePlaying => self.toggle_playing(),
             NextTrack => self.next_track(),
+            SetPic(i, d) => self.set_pic(i, d),
         }
 
         return true;
