@@ -17,7 +17,20 @@ use api;
 use player;
 use webinterface;
 
-static EIGHTTRACKS_ICON_FILENAME: &'static str = "8tracks-icon.jpg";
+static ICON_DATA: &'static [u8] = include_bin!("8tracks-icon.jpg");
+
+fn get_icon_pixbuf() -> *mut GdkPixbuf {
+    unsafe {
+        let mut err = ptr::mut_null();
+        let stream = g_memory_input_stream_new_from_data(
+            vecraw::to_ptr(ICON_DATA) as *libc::c_void,
+            ICON_DATA.len() as i64, cast::transmute(0));
+        let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
+        assert!(pixbuf != ptr::mut_null());
+        g_input_stream_close(stream, ptr::mut_null(), &mut err);
+        pixbuf
+    }
+}
 
 static PLAY_ICON_NAME: &'static str = "media-playback-start";
 static PAUSE_ICON_NAME: &'static str = "media-playback-pause";
@@ -64,11 +77,7 @@ impl MixEntry {
             gtk_label_set_line_wrap_mode(label as *mut GtkLabel, PANGO_WRAP_WORD_CHAR);
             gtk_misc_set_alignment(label as *mut GtkMisc, 0f32, 0.5f32);
 
-
-            let pixbuf1 = EIGHTTRACKS_ICON_FILENAME.with_c_str(|cstr| {
-                let mut err = ptr::mut_null();
-                gdk_pixbuf_new_from_file(cstr, &mut err)
-            });
+            let pixbuf1 = get_icon_pixbuf();
             let pixbuf2 = gdk_pixbuf_scale_simple(&*pixbuf1, 133, 133, GDK_INTERP_BILINEAR);
             gdk_pixbuf_unref(pixbuf1);
             let image = gtk_image_new_from_pixbuf(pixbuf2);
@@ -209,6 +218,9 @@ impl Gui {
                                          cast::transmute(close_button_pressed),
                                          cast::transmute::<&Gui, gpointer>(self));
                     });
+                    let icon = get_icon_pixbuf();
+                    gtk_window_set_icon(cast::transmute(ig.main_window), icon);
+                    gdk_pixbuf_unref(icon);
 
                     let main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
                     gtk_container_add(cast::transmute(ig.main_window), main_box);
