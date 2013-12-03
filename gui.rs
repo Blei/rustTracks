@@ -17,7 +17,11 @@ use api;
 use player;
 use webinterface;
 
-static eigthtracks_icon_filename: &'static str = "8tracks-icon.jpg";
+static EIGHTTRACKS_ICON_FILENAME: &'static str = "8tracks-icon.jpg";
+
+static PLAY_ICON_NAME: &'static str = "media-playback-start";
+static PAUSE_ICON_NAME: &'static str = "media-playback-pause";
+static SKIP_ICON_NAME: &'static str = "media-skip-forward";
 
 struct GuiGSource {
     g_source: GSource,
@@ -34,6 +38,7 @@ pub enum GuiUpdateMessage {
     ReportCurrentTrack,
     TogglePlaying,
     NextTrack,
+    SkipTrack,
     SetPic(uint, ~[u8]),
 }
 
@@ -59,7 +64,7 @@ impl MixEntry {
             gtk_misc_set_alignment(label as *mut GtkMisc, 0f32, 0.5f32);
 
 
-            let pixbuf1 = eigthtracks_icon_filename.with_c_str(|cstr| {
+            let pixbuf1 = EIGHTTRACKS_ICON_FILENAME.with_c_str(|cstr| {
                 let mut err = ptr::mut_null();
                 gdk_pixbuf_new_from_file(cstr, &mut err)
             });
@@ -117,12 +122,16 @@ struct InnerGui {
     priv main_window: *mut GtkWidget,
     priv mixes_box: *mut GtkWidget,
     priv toggle_button: *mut GtkWidget,
+    priv skip_button: *mut GtkWidget,
+    priv progress_bar: *mut GtkWidget,
 }
 
 impl InnerGui {
-    fn toggle_button_set_sensitive(&self, sensitive: bool) {
+    fn control_buttons_set_sensitive(&self, sensitive: bool) {
         unsafe {
             gtk_widget_set_sensitive(self.toggle_button,
+                if sensitive { 1 } else { 0 });
+            gtk_widget_set_sensitive(self.skip_button,
                 if sensitive { 1 } else { 0 });
         }
     }
@@ -165,6 +174,8 @@ impl Gui {
             main_window: ptr::mut_null(),
             mixes_box: ptr::mut_null(),
             toggle_button: ptr::mut_null(),
+            skip_button: ptr::mut_null(),
+            progress_bar: ptr::mut_null(),
         };
         Gui {
             ig: RWArc::new(inner_gui),
@@ -201,15 +212,35 @@ impl Gui {
                     let main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
                     gtk_container_add(cast::transmute(ig.main_window), main_box);
 
-                    ig.toggle_button = "Toggle".with_c_str(|t| gtk_button_new_with_label(t));
-                    ig.toggle_button_set_sensitive(false);
+                    let control_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+                    gtk_container_add(cast::transmute(main_box), control_box);
+
+                    ig.toggle_button = PAUSE_ICON_NAME.with_c_str(|cstr|
+                        gtk_button_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
+                    );
                     "clicked".with_c_str(|clicked| {
                         g_signal_connect(cast::transmute(ig.toggle_button),
                                          clicked,
                                          cast::transmute(toggle_button_clicked),
                                          cast::transmute::<&Gui, gpointer>(self));
                     });
-                    gtk_box_pack_start(cast::transmute(main_box), ig.toggle_button, 0, 0, 0);
+                    gtk_box_pack_start(cast::transmute(control_box), ig.toggle_button, 0, 0, 0);
+
+                    ig.skip_button = SKIP_ICON_NAME.with_c_str(|cstr|
+                        gtk_button_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
+                    );
+                    "clicked".with_c_str(|clicked| {
+                        g_signal_connect(cast::transmute(ig.skip_button),
+                                         clicked,
+                                         cast::transmute(skip_button_clicked),
+                                         cast::transmute::<&Gui, gpointer>(self));
+                    });
+                    gtk_box_pack_start(cast::transmute(control_box), ig.skip_button, 0, 0, 0);
+
+                    ig.progress_bar = gtk_progress_bar_new();
+                    gtk_box_pack_end(cast::transmute(control_box), ig.progress_bar, 1, 1, 0);
+
+                    ig.control_buttons_set_sensitive(false);
 
                     let scrolled_window = gtk_scrolled_window_new(ptr::mut_null(), ptr::mut_null());
                     gtk_scrolled_window_set_policy(cast::transmute(scrolled_window),
@@ -364,7 +395,7 @@ impl Gui {
             debug!("setting uri to `{}`", track.track_file_stream_url);
             ig.player.set_uri(track.track_file_stream_url, self);
             ig.player.play();
-            ig.toggle_button_set_sensitive(true);
+            ig.control_buttons_set_sensitive(true);
         });
     }
 
@@ -384,14 +415,27 @@ impl Gui {
 
     fn toggle_playing(&self) {
         debug!("toggling!");
-        self.ig.write(|ig| ig.player.toggle() );
+        self.ig.write(|ig| {
+            ig.player.toggle();
+            let icon_name = if ig.player.is_playing() {
+                PAUSE_ICON_NAME
+            } else {
+                PLAY_ICON_NAME
+            };
+            unsafe {
+                let image = icon_name.with_c_str(|cstr|
+                    gtk_image_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
+                );
+                gtk_button_set_image(cast::transmute(ig.toggle_button), image);
+            }
+        });
     }
 
     fn next_track(&self) {
         self.ig.write(|ig| {
             ig.player.stop();
             ig.current_track = None;
-            ig.toggle_button_set_sensitive(false);
+            ig.control_buttons_set_sensitive(false);
 
             let i = ig.current_mix_index.unwrap();
             let mix = ig.mix_entries[i].mix.clone();
@@ -404,6 +448,10 @@ impl Gui {
                 chan.send(PlayTrack(play_state.contents.track));
             }
         });
+    }
+
+    fn skip_track(&self) {
+        println!("TODO");
     }
 
     fn set_pic(&self, i: uint, mut pic_data: ~[u8]) {
@@ -451,6 +499,7 @@ impl Gui {
             ReportCurrentTrack => self.report_current_track(),
             TogglePlaying => self.toggle_playing(),
             NextTrack => self.next_track(),
+            SkipTrack => self.skip_track(),
             SetPic(i, d) => self.set_pic(i, d),
         }
 
@@ -523,5 +572,12 @@ extern "C" fn toggle_button_clicked(_button: *GtkButton, user_data: gpointer) {
     unsafe {
     let gui: &Gui = cast::transmute(user_data);
     gui.get_chan().send(TogglePlaying);
+    }
+}
+
+extern "C" fn skip_button_clicked(_button: *GtkButton, user_data: gpointer) {
+    unsafe {
+    let gui: &Gui = cast::transmute(user_data);
+    gui.get_chan().send(SkipTrack);
     }
 }
