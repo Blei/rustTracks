@@ -310,7 +310,7 @@ impl Gui {
                 clear_gtk_container(cast::transmute(ig.mixes_box));
                 for i in iter::range(0, mixes.len()) {
                     let mix_entry = MixEntry::new(mixes[i].clone(), &self.mix_index_table[i]);
-                    gtk_box_pack_end(cast::transmute(ig.mixes_box),
+                    gtk_box_pack_start(cast::transmute(ig.mixes_box),
                         mix_entry.widget, 0, 1, 0);
                     ig.mix_entries.push(mix_entry);
 
