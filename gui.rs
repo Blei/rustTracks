@@ -46,6 +46,16 @@ struct InnerGui {
 
     priv main_window: *mut GtkWidget,
     priv mixes_box: *mut GtkWidget,
+    priv toggle_button: *mut GtkWidget,
+}
+
+impl InnerGui {
+    fn toggle_button_set_sensitive(&self, sensitive: bool) {
+        unsafe {
+            gtk_widget_set_sensitive(self.toggle_button,
+                if sensitive { 1 } else { 0 });
+        }
+    }
 }
 
 pub struct Gui {
@@ -84,6 +94,7 @@ impl Gui {
             current_track: None,
             main_window: ptr::mut_null(),
             mixes_box: ptr::mut_null(),
+            toggle_button: ptr::mut_null(),
         };
         Gui {
             ig: RWArc::new(inner_gui),
@@ -120,14 +131,15 @@ impl Gui {
                     let main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
                     gtk_container_add(cast::transmute(ig.main_window), main_box);
 
-                    let toggle_button = "Toggle".with_c_str(|t| gtk_button_new_with_label(t));
+                    ig.toggle_button = "Toggle".with_c_str(|t| gtk_button_new_with_label(t));
+                    ig.toggle_button_set_sensitive(false);
                     "clicked".with_c_str(|clicked| {
-                        g_signal_connect(cast::transmute(toggle_button),
+                        g_signal_connect(cast::transmute(ig.toggle_button),
                                          clicked,
                                          cast::transmute(toggle_button_clicked),
                                          cast::transmute::<&Gui, gpointer>(self));
                     });
-                    gtk_box_pack_start(cast::transmute(main_box), toggle_button, 0, 0, 0);
+                    gtk_box_pack_start(cast::transmute(main_box), ig.toggle_button, 0, 0, 0);
 
                     let scrolled_window = gtk_scrolled_window_new(ptr::mut_null(), ptr::mut_null());
                     gtk_scrolled_window_set_policy(cast::transmute(scrolled_window),
@@ -274,6 +286,7 @@ impl Gui {
             debug!("setting uri to `{}`", track.track_file_stream_url);
             ig.player.set_uri(track.track_file_stream_url, self);
             ig.player.play();
+            ig.toggle_button_set_sensitive(true);
         });
     }
 
@@ -300,6 +313,7 @@ impl Gui {
         self.ig.write(|ig| {
             ig.player.stop();
             ig.current_track = None;
+            ig.toggle_button_set_sensitive(false);
 
             let i = ig.current_mix_index.unwrap();
             let mix = ig.mixes[i].clone();
