@@ -32,13 +32,48 @@ pub enum GuiUpdateMessage {
     NextTrack,
 }
 
+#[deriving(Clone)]
+struct MixEntry {
+    mix: api::Mix,
+
+    widget: *mut GtkWidget,
+}
+
+impl MixEntry {
+    fn new(mix: api::Mix, mix_table_entry: &(*mut Gui, uint)) -> MixEntry {
+        let widget = unsafe {
+            let box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+            let label = mix.name.with_c_str(|c_str| {
+                gtk_label_new(c_str)
+            });
+            gtk_container_add(cast::transmute(box), label);
+            let button = "Play".with_c_str(|p| {
+                gtk_button_new_with_label(p)
+            });
+            gtk_container_add(cast::transmute(box), button);
+            "clicked".with_c_str(|c| {
+                g_signal_connect(cast::transmute(button),
+                                 c,
+                                 cast::transmute(play_button_clicked),
+                                 cast::transmute::<&(*mut Gui, uint), gpointer>(mix_table_entry));
+            });
+            box
+        };
+
+        MixEntry {
+            mix: mix,
+            widget: widget,
+        }
+    }
+}
+
 struct InnerGui {
     priv initialized: bool,
     priv running: bool,
 
     priv player: player::Player,
 
-    priv mixes: ~[api::Mix],
+    priv mix_entries: ~[MixEntry],
     priv play_token: Option<api::PlayToken>,
 
     priv current_mix_index: Option<uint>,
@@ -88,7 +123,7 @@ impl Gui {
             initialized: false,
             running: false,
             player: player::Player::new(),
-            mixes: ~[],
+            mix_entries: ~[],
             play_token: None,
             current_mix_index: None,
             current_track: None,
@@ -234,15 +269,15 @@ impl Gui {
             (ptr::to_mut_unsafe_ptr(self), i)
         });
         self.ig.write(|ig| {
-            // TODO why is this clone necessary?? blerg, once functions?
-            ig.mixes = mixes.clone();
-            debug!("setting mixes, length {}", ig.mixes.len());
+            ig.mix_entries.clear();
+            debug!("setting mixes, length {}", mixes.len());
             unsafe {
                 clear_gtk_container(cast::transmute(ig.mixes_box));
                 for i in iter::range(0, mixes.len()) {
-                    let mix_entry = create_mix_entry(&ig.mixes[i], &self.mix_index_table[i]);
+                    let mix_entry = MixEntry::new(mixes[i].clone(), &self.mix_index_table[i]);
                     gtk_box_pack_end(cast::transmute(ig.mixes_box),
-                        mix_entry, 0, 1, 0);
+                        mix_entry.widget, 0, 1, 0);
+                    ig.mix_entries.push(mix_entry);
                 }
                 gtk_widget_show_all(ig.mixes_box);
             }
@@ -262,11 +297,11 @@ impl Gui {
     fn play_mix(&self, i: uint) {
         debug!("playing mix with index {}", i);
         self.ig.write(|ig| {
-            if i >= ig.mixes.len() {
+            if i >= ig.mix_entries.len() {
                 warn!("index is out of bounds, ignoring message");
             } else {
                 ig.current_mix_index = Some(i);
-                let mix = ig.mixes[i].clone();
+                let mix = ig.mix_entries[i].mix.clone();
                 debug!("playing mix with name `{}`", mix.name);
                 let chan = self.chan.clone();
                 let pt = ig.play_token.get_ref().clone();
@@ -295,7 +330,7 @@ impl Gui {
         let (pt, ti, mi) = self.ig.read(|ig|
             (
                 ig.play_token.get_ref().clone(),
-                ig.mixes[*ig.current_mix_index.get_ref()].id,
+                ig.mix_entries[*ig.current_mix_index.get_ref()].mix.id,
                 ig.current_track.get_ref().id,
             )
         );
@@ -316,7 +351,7 @@ impl Gui {
             ig.toggle_button_set_sensitive(false);
 
             let i = ig.current_mix_index.unwrap();
-            let mix = ig.mixes[i].clone();
+            let mix = ig.mix_entries[i].mix.clone();
             debug!("getting next track of mix with name `{}`", mix.name);
             let chan = self.chan.clone();
             let pt = ig.play_token.get_ref().clone();
@@ -364,27 +399,6 @@ fn clear_gtk_container(container: *mut GtkContainer) {
             gtk_widget_destroy(widget);
         }
         g_list_free(l);
-    }
-}
-
-fn create_mix_entry(mix: &api::Mix, mix_table_entry: &(*mut Gui, uint)) -> *mut GtkWidget {
-    unsafe {
-        let box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-        let label = mix.name.with_c_str(|c_str| {
-            gtk_label_new(c_str)
-        });
-        gtk_container_add(cast::transmute(box), label);
-        let button = "Play".with_c_str(|p| {
-            gtk_button_new_with_label(p)
-        });
-        gtk_container_add(cast::transmute(box), button);
-        "clicked".with_c_str(|c| {
-            g_signal_connect(cast::transmute(button),
-                             c,
-                             cast::transmute(play_button_clicked),
-                             cast::transmute::<&(*mut Gui, uint), gpointer>(mix_table_entry));
-        });
-        box
     }
 }
 
