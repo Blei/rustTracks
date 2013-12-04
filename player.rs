@@ -1,30 +1,67 @@
 use std::cast;
 use std::logging;
 use std::ptr;
+use std::rt::comm;
 use std::str::raw::from_c_str;
-use std::task;
 
 use gtk::*;
 use gtk::ffi::*;
 
 use gui;
+use tfs = timerfd_source;
 
-struct ClockIDWrapper {
-    ci: GstClockID,
+static PLAYBIN_ELEMENT_NAME: &'static str = "rusttracks-playbin";
+
+struct ReportCallback {
+    chan: comm::SharedChan<gui::GuiUpdateMessage>,
 }
 
-impl ClockIDWrapper {
-    fn new(ci: GstClockID) -> ClockIDWrapper {
-        ClockIDWrapper { ci: ci }
+impl ReportCallback {
+    fn new(chan: comm::SharedChan<gui::GuiUpdateMessage>) -> ReportCallback {
+        ReportCallback { chan: chan }
     }
 }
 
-impl Drop for ClockIDWrapper {
-    fn drop(&mut self) {
-        unsafe {
-            gst_clock_id_unschedule(self.ci);
-            gst_clock_id_unref(self.ci);
+impl tfs::TimerGSourceCallback for ReportCallback {
+    fn callback(&mut self, _timer: &mut tfs::Timer) -> bool {
+        self.chan.send(gui::ReportCurrentTrack);
+        false
+    }
+}
+
+struct ProgressCallback {
+    chan: comm::SharedChan<gui::GuiUpdateMessage>,
+    playbin: *mut GstElement,
+}
+
+impl ProgressCallback {
+    fn new(chan: comm::SharedChan<gui::GuiUpdateMessage>, playbin: *mut GstElement) -> ProgressCallback {
+        ProgressCallback { chan: chan, playbin: playbin }
+    }
+}
+
+impl tfs::TimerGSourceCallback for ProgressCallback {
+    fn callback(&mut self, _timer: &mut tfs::Timer) -> bool {
+        let mut current_position = 0;
+        let mut current_duration = 0;
+
+        let success_position = unsafe {
+            gst_element_query_position(
+                self.playbin, GST_FORMAT_TIME, &mut current_position)
+        };
+
+        let success_duration = unsafe {
+            gst_element_query_duration(
+                self.playbin, GST_FORMAT_TIME, &mut current_duration)
+        };
+
+        if success_duration != 0 && success_position != 0 {
+            self.chan.send(gui::SetProgress(Some((current_position, current_duration))));
+        } else {
+            self.chan.send(gui::SetProgress(None));
         }
+
+        true
     }
 }
 
@@ -35,8 +72,9 @@ struct Player {
     playing: bool,
 
     playbin: *mut GstElement,
-    report_clock_id: Option<ClockIDWrapper>,
-    progress_clock_id: Option<ClockIDWrapper>,
+
+    report_timer: Option<tfs::TimerGSource>,
+    progress_timer: Option<tfs::TimerGSource>,
 }
 
 impl Player {
@@ -46,8 +84,8 @@ impl Player {
             uri_set: false,
             playing: false,
             playbin: ptr::mut_null(),
-            report_clock_id: None,
-            progress_clock_id: None,
+            report_timer: None,
+            progress_timer: None,
         }
     }
 
@@ -60,7 +98,7 @@ impl Player {
         };
         unsafe {
             "playbin".with_c_str(|c_str| {
-                "rusttracks-playbin".with_c_str(|rtpb| {
+                PLAYBIN_ELEMENT_NAME.with_c_str(|rtpb| {
                     self.playbin = gst_element_factory_make(c_str, rtpb);
                 });
             });
@@ -76,7 +114,7 @@ impl Player {
         args2
     }
 
-    pub fn set_uri(&mut self, uri: &str, gui: &gui::Gui) {
+    pub fn set_uri(&mut self, uri: &str) {
         self.stop();
         unsafe {
             "uri".with_c_str(|property_c_str| {
@@ -86,87 +124,7 @@ impl Player {
                 });
             });
         }
-
-        self.start_report_watch(gui);
-        self.start_progress_watch(gui);
-
         self.uri_set = true;
-    }
-
-    fn start_report_watch(&mut self, gui: &gui::Gui) {
-        let chan = gui.get_chan().clone();
-        unsafe {
-
-            let clock = gst_pipeline_get_clock(cast::transmute(self.playbin));
-
-            // in nanoseconds
-            let timeout: guint64 = 30 * 1000 * 1000 * 1000;
-            let target_time = gst_clock_get_time(clock) + timeout;
-
-            let ci = gst_clock_new_single_shot_id(clock, target_time);
-            self.report_clock_id = Some(ClockIDWrapper::new(ci));
-
-            do task::spawn_sched(task::SingleThreaded) {
-                let res = gst_clock_id_wait(ci, ptr::mut_null());
-                match res {
-                    GST_CLOCK_UNSCHEDULED => { } // Ignore, nothing to do
-                    GST_CLOCK_OK => {
-                        debug!("30s are up! sending ReportCurrentTrack to gui");
-                        chan.send(gui::ReportCurrentTrack);
-                    }
-                    _ => unreachable!()
-                }
-            }
-
-            gst_object_unref(cast::transmute(clock));
-        }
-    }
-
-    fn start_progress_watch(&mut self, gui: &gui::Gui) {
-        let chan = gui.get_chan().clone();
-        unsafe {
-
-            let clock = gst_pipeline_get_clock(cast::transmute(self.playbin));
-
-            // in nanoseconds
-            let period: guint64 = 1 * 1000 * 1000 * 1000;
-            let start_time = gst_clock_get_time(clock);
-
-            let ci = gst_clock_new_periodic_id(clock, start_time, period);
-            self.progress_clock_id = Some(ClockIDWrapper::new(ci));
-
-            let playbin = self.playbin;
-            do task::spawn_sched(task::SingleThreaded) {
-                loop {
-                    let res = gst_clock_id_wait(ci, ptr::mut_null());
-                    match res {
-                        GST_CLOCK_UNSCHEDULED => {
-                            // Track has ended or whatever, stop polling
-                            break;
-                        }
-                        // early is ok as well, we just want the current time
-                        GST_CLOCK_OK | GST_CLOCK_EARLY => {
-                            debug!("1s is up! sending progress");
-                            let mut current_position = 0;
-                            let success_position = gst_element_query_position(
-                                playbin, GST_FORMAT_TIME, &mut current_position);
-                            let mut current_duration = 0;
-                            let success_duration = gst_element_query_duration(
-                                playbin, GST_FORMAT_TIME, &mut current_duration);
-
-                            if success_duration != 0 && success_position != 0 {
-                                chan.send(gui::SetProgress(Some((current_position, current_duration))));
-                            } else {
-                                chan.send(gui::SetProgress(None));
-                            }
-                        }
-                        _ => unreachable!()
-                    }
-                }
-            }
-
-            gst_object_unref(cast::transmute(clock));
-        }
     }
 
     pub fn play(&mut self) {
@@ -197,8 +155,7 @@ impl Player {
         if !self.initialized {
             fail!("player is not initialized");
         }
-        self.report_clock_id = None;
-        self.progress_clock_id = None;
+        self.stop_timers();
         unsafe{
             gst_element_set_state(self.playbin, GST_STATE_READY);
         }
@@ -220,6 +177,44 @@ impl Player {
 
     pub fn can_play(&self) -> bool {
         self.uri_set
+    }
+
+    pub fn start_timers(&mut self, chan: comm::SharedChan<gui::GuiUpdateMessage>) {
+        let context = unsafe { g_main_context_default() };
+
+        if self.report_timer.is_none() {
+            let rc = ~ReportCallback::new(chan.clone());
+            let mut rt = tfs::TimerGSource::new(rc as ~tfs::TimerGSourceCallback: Freeze + Send);
+            rt.attach(context);
+            rt.timer.set_oneshot(30 * 1000);
+            self.report_timer = Some(rt);
+        }
+        self.report_timer.get_mut_ref().timer.start();
+
+        if self.progress_timer.is_none() {
+            let pc = ~ProgressCallback::new(chan, self.playbin);
+            let mut pt = tfs::TimerGSource::new(pc as ~tfs::TimerGSourceCallback: Freeze + Send);
+            pt.attach(context);
+            pt.timer.set_interval(1, 1 * 1000);
+            self.progress_timer = Some(pt);
+        }
+        self.progress_timer.get_mut_ref().timer.start();
+    }
+
+    pub fn pause_timers(&mut self) {
+        match self.report_timer {
+            Some(ref mut rt) => rt.timer.stop(),
+            None => ()
+        }
+        match self.progress_timer {
+            Some(ref mut pt) => pt.timer.stop(),
+            None => ()
+        }
+    }
+
+    pub fn stop_timers(&mut self) {
+        self.report_timer = None;
+        self.progress_timer = None;
     }
 }
 
@@ -307,6 +302,24 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         GST_MESSAGE_EOS => {
             debug!("EOS from element {}", name);
             gui.get_chan().send(gui::NextTrack);
+        }
+        GST_MESSAGE_STATE_CHANGED => {
+            if name.as_slice() == PLAYBIN_ELEMENT_NAME {
+                let mut new_state = 0;
+                gst_message_parse_state_changed(msg, ptr::mut_null(),
+                    &mut new_state, ptr::mut_null());
+                match new_state {
+                    GST_STATE_PLAYING => {
+                        gui.get_chan().send(gui::ContinueTimers);
+                    }
+                    GST_STATE_PAUSED => {
+                        gui.get_chan().send(gui::PauseTimers);
+                    }
+                    _ => {
+                        // Do nothing, the timers will be overwritten anyways
+                    }
+                }
+            }
         }
         _ => {
             if log_enabled!(logging::DEBUG) {

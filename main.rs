@@ -7,6 +7,7 @@ extern mod http;
 mod api;
 mod gui;
 mod player;
+mod timerfd_source;
 mod webinterface;
 
 pub fn main() {

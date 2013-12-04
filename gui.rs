@@ -55,6 +55,8 @@ pub enum GuiUpdateMessage {
     SetPic(uint, ~[u8]),
     SetProgress(Option<(i64, i64)>),
     Notify(~str),
+    StartTimers,
+    PauseTimers,
 }
 
 #[deriving(Clone)]
@@ -141,6 +143,26 @@ struct InnerGui {
 }
 
 impl InnerGui {
+    fn new() -> InnerGui {
+        InnerGui {
+            initialized: false,
+            running: false,
+            player: player::Player::new(),
+            mix_entries: ~[],
+            play_token: None,
+            current_mix_index: None,
+            current_track: None,
+            main_window: ptr::mut_null(),
+            mixes_box: ptr::mut_null(),
+            toggle_button: ptr::mut_null(),
+            skip_button: ptr::mut_null(),
+            progress_bar: ptr::mut_null(),
+            info_label: ptr::mut_null(),
+            status_bar: ptr::mut_null(),
+            status_bar_ci: None,
+        }
+    }
+
     fn control_buttons_set_sensitive(&self, sensitive: bool) {
         unsafe {
             gtk_widget_set_sensitive(self.toggle_button,
@@ -258,23 +280,7 @@ impl Drop for Gui {
 impl Gui {
     pub fn new() -> Gui {
         let (port, chan) = comm::stream();
-        let inner_gui = InnerGui {
-            initialized: false,
-            running: false,
-            player: player::Player::new(),
-            mix_entries: ~[],
-            play_token: None,
-            current_mix_index: None,
-            current_track: None,
-            main_window: ptr::mut_null(),
-            mixes_box: ptr::mut_null(),
-            toggle_button: ptr::mut_null(),
-            skip_button: ptr::mut_null(),
-            progress_bar: ptr::mut_null(),
-            info_label: ptr::mut_null(),
-            status_bar: ptr::mut_null(),
-            status_bar_ci: None,
-        };
+        let inner_gui = InnerGui::new();
         Gui {
             ig: RWArc::new(inner_gui),
             port: port,
@@ -366,7 +372,7 @@ impl Gui {
                     gtk_box_pack_start(cast::transmute(main_box), ig.status_bar, 0, 0, 0);
 
                     let g_source = g_source_new(cast::transmute(&self.g_source_funcs),
-                                                mem::size_of::<GuiGSource>() as u32);
+                                                mem::size_of::<GuiGSource>() as guint);
                     self.gui_g_source = cast::transmute::<*mut GSource, *mut GuiGSource>(g_source);
                     (*self.gui_g_source).gui_ptr = cast::transmute::<&Gui, *Gui>(self);
                 };
@@ -533,7 +539,7 @@ impl Gui {
             debug!("playing track `{}`", track.name);
             ig.set_current_track(track.clone());
             debug!("setting uri to `{}`", track.track_file_stream_url);
-            ig.player.set_uri(track.track_file_stream_url, self);
+            ig.player.set_uri(track.track_file_stream_url);
             ig.player.play();
             ig.update_play_button_icon();
             ig.control_buttons_set_sensitive(true);
@@ -628,10 +634,23 @@ impl Gui {
             }
         });
 
-
         unsafe {
             gdk_pixbuf_unref(pixbuf);
         }
+    }
+
+    fn start_timers(&self) {
+        debug!("starting timers");
+        self.ig.write(|ig| {
+            ig.player.start_timers(self.chan.clone());
+        });
+    }
+
+    fn pause_timers(&self) {
+        debug!("pausing timers");
+        self.ig.write(|ig| {
+            ig.player.pause_timers();
+        });
     }
 
     fn set_progress(&self, progress: Option<(i64, i64)>) {
@@ -662,6 +681,8 @@ impl Gui {
             SetPic(i, d) => self.set_pic(i, d),
             SetProgress(p) => self.set_progress(p),
             Notify(m) => self.notify(m),
+            StartTimers => self.start_timers(),
+            PauseTimers => self.pause_timers(),
         }
 
         return true;
