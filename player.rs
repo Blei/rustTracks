@@ -310,7 +310,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                     &mut new_state, ptr::mut_null());
                 match new_state {
                     GST_STATE_PLAYING => {
-                        gui.get_chan().send(gui::ContinueTimers);
+                        gui.get_chan().send(gui::StartTimers);
                     }
                     GST_STATE_PAUSED => {
                         gui.get_chan().send(gui::PauseTimers);
