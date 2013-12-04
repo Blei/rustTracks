@@ -135,6 +135,7 @@ struct InnerGui {
     priv toggle_button: *mut GtkWidget,
     priv skip_button: *mut GtkWidget,
     priv progress_bar: *mut GtkWidget,
+    priv info_label: *mut GtkWidget,
     priv status_bar: *mut GtkWidget,
     priv status_bar_ci: Option<guint>,
 }
@@ -189,6 +190,46 @@ impl InnerGui {
             }
         }
     }
+
+    fn set_current_track(&mut self, track: api::Track) {
+        self.current_track = Some(track);
+        self.update_track_info();
+    }
+
+    fn remove_current_track(&mut self) {
+        self.current_track = None;
+        self.update_track_info();
+    }
+
+    fn update_track_info(&mut self) {
+        match self.current_track {
+            None => {
+                unsafe {
+                    "".with_c_str(|cstr|
+                        gtk_label_set_text(cast::transmute(self.info_label), cstr)
+                    );
+                }
+            }
+            Some(ref track) => {
+                let mut text = format!("'{}' by {}", track.name, track.performer);
+                match track.release_name {
+                    Some(ref rn) => {
+                        text.push_str(format!("\nAlbum: {}", *rn));
+                        match track.year {
+                            Some(year) => text.push_str(format!(" ({})", year)),
+                            None => ()
+                        }
+                    }
+                    None => ()
+                }
+                unsafe {
+                    text.with_c_str(|cstr|
+                        gtk_label_set_text(cast::transmute(self.info_label), cstr)
+                    );
+                }
+            }
+        }
+    }
 }
 
 pub struct Gui {
@@ -230,6 +271,7 @@ impl Gui {
             toggle_button: ptr::mut_null(),
             skip_button: ptr::mut_null(),
             progress_bar: ptr::mut_null(),
+            info_label: ptr::mut_null(),
             status_bar: ptr::mut_null(),
             status_bar_ci: None,
         };
@@ -304,6 +346,10 @@ impl Gui {
                     gtk_progress_bar_set_show_text(cast::transmute(ig.progress_bar), 1);
 
                     ig.control_buttons_set_sensitive(false);
+
+                    ig.info_label = gtk_label_new(ptr::null());
+                    gtk_box_pack_start(cast::transmute(main_box), ig.info_label, 0, 0, 0);
+                    gtk_label_set_justify(cast::transmute(ig.info_label), GTK_JUSTIFY_CENTER);
 
                     let scrolled_window = gtk_scrolled_window_new(ptr::mut_null(), ptr::mut_null());
                     gtk_scrolled_window_set_policy(cast::transmute(scrolled_window),
@@ -485,7 +531,7 @@ impl Gui {
     fn play_track(&self, track: api::Track) {
         self.ig.write(|ig| {
             debug!("playing track `{}`", track.name);
-            ig.current_track = Some(track.clone());
+            ig.set_current_track(track.clone());
             debug!("setting uri to `{}`", track.track_file_stream_url);
             ig.player.set_uri(track.track_file_stream_url, self);
             ig.player.play();
@@ -520,7 +566,7 @@ impl Gui {
     fn next_track(&self) {
         self.ig.write(|ig| {
             ig.player.stop();
-            ig.current_track = None;
+            ig.remove_current_track();
             ig.control_buttons_set_sensitive(false);
 
             let i = ig.current_mix_index.unwrap();
