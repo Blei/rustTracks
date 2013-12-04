@@ -39,16 +39,16 @@ pub struct Response<T> {
     notices: Option<~str>,
     logged_in: bool,
     api_version: uint,
-    contents: T,
+    contents: Option<T>,
 }
 
 impl <T> Response<T> {
-    fn from_json(json: &json::Json, contents: T) -> Response<T> {
+    fn from_json(json: &json::Json, contents: Option<T>) -> Response<T> {
         let obj = expect_json_object(json);
         Response::from_json_obj(obj, contents)
     }
 
-    fn from_json_obj(obj: &json::Object, contents: T) -> Response<T> {
+    fn from_json_obj(obj: &json::Object, contents: Option<T>) -> Response<T> {
         Response {
             status: extract_from_json_object(obj, &~"status"),
             errors: maybe_extract_from_json_object(obj, &~"errors"),
@@ -193,19 +193,19 @@ impl PlayState {
 
 pub fn parse_mix_set_response(json: &json::Json) -> Response<MixSet> {
     let obj = expect_json_object(json);
-    let mix_set = MixSet::from_json(obj.find(&~"mix_set").unwrap());
+    let mix_set = obj.find(&~"mix_set").map(|ms| MixSet::from_json(ms));
     Response::from_json(json, mix_set)
 }
 
 pub fn parse_play_token_response(json: &json::Json) -> Response<PlayToken> {
     let obj = expect_json_object(json);
-    let pt = PlayToken(extract_from_json_object(obj, &~"play_token"));
+    let pt = maybe_extract_from_json_object(obj, &~"play_token").map(|pt| PlayToken(pt));
     Response::from_json(json, pt)
 }
 
 pub fn parse_play_state_response(json: &json::Json) -> Response<PlayState> {
     let obj = expect_json_object(json);
     debug!("play state json {}", json.to_str());
-    let ps = PlayState::from_json(obj.find(&~"set").unwrap().clone());
+    let ps = obj.find(&~"set").map(|set| PlayState::from_json(set.clone()));
     Response::from_json(json, ps)
 }

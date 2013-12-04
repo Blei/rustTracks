@@ -404,7 +404,10 @@ impl Gui {
         do task::spawn_sched(task::SingleThreaded) {
             let pt_json = webinterface::get_play_token();
             let pt = api::parse_play_token_response(&pt_json);
-            chan.send(SetPlayToken(pt.contents));
+            match pt.contents {
+                Some(pt) => chan.send(SetPlayToken(pt)),
+                None => chan.send(Notify(~"Playtoken could not be obtained"))
+            }
         }
     }
 
@@ -449,7 +452,10 @@ impl Gui {
         do task::spawn_sched(task::SingleThreaded) {
             let mix_set_json = webinterface::get_mix_set(smart_id);
             let mix_set = api::parse_mix_set_response(&mix_set_json);
-            chan.send(UpdateMixes(mix_set.contents.mixes));
+            match mix_set.contents {
+                Some(ms) => chan.send(UpdateMixes(ms.mixes)),
+                None => chan.send(Notify(~"Mix list could not be obtained"))
+            }
         }
     }
 
@@ -467,7 +473,10 @@ impl Gui {
                 do task::spawn_sched(task::SingleThreaded) {
                     let play_state_json = webinterface::get_play_state(&pt, &mix);
                     let play_state = api::parse_play_state_response(&play_state_json);
-                    chan.send(PlayTrack(play_state.contents.track));
+                    match play_state.contents {
+                        Some(ps) => chan.send(PlayTrack(ps.track)),
+                        None => chan.send(Notify(~"Could not start playing mix"))
+                    }
                 }
             }
         });
@@ -543,7 +552,10 @@ impl Gui {
             do task::spawn_sched(task::SingleThreaded) {
                 let skip_track_json = webinterface::get_skip_track(&pt, &mix);
                 let play_state = api::parse_play_state_response(&skip_track_json);
-                chan.send(PlayTrack(play_state.contents.track));
+                match play_state.contents {
+                    Some(ps) => chan.send(PlayTrack(ps.track)),
+                    None => chan.send(Notify(~"Could not skip track"))
+                }
             }
         });
     }
