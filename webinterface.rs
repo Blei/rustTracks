@@ -47,7 +47,7 @@ fn get_data_from_url(url: url::Url) -> ~[u8] {
     request.headers.insert(ExtensionHeader(~"X-Api-Version", api::API_VERSION.to_str()));
     let mut response = match request.read_response() {
         Ok(response) => response,
-        Err(_) => fail!("failed to get mixes"),
+        Err(_) => fail!("failed to fetch data"),
     };
     response.read_to_end()
 }
