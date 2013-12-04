@@ -130,9 +130,9 @@ impl Player {
 
             // in nanoseconds
             let period: guint64 = 1 * 1000 * 1000 * 1000;
-            let target_time = gst_clock_get_time(clock) + period;
+            let start_time = gst_clock_get_time(clock);
 
-            let ci = gst_clock_new_periodic_id(clock, target_time, period);
+            let ci = gst_clock_new_periodic_id(clock, start_time, period);
             self.progress_clock_id = Some(ClockIDWrapper::new(ci));
 
             let playbin = self.playbin;
@@ -144,7 +144,8 @@ impl Player {
                             // Track has ended or whatever, stop polling
                             break;
                         }
-                        GST_CLOCK_OK => {
+                        // early is ok as well, we just want the current time
+                        GST_CLOCK_OK | GST_CLOCK_EARLY => {
                             debug!("1s is up! sending progress");
                             let mut current_position = 0;
                             let success_position = gst_element_query_position(
