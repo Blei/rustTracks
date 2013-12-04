@@ -54,6 +54,7 @@ pub enum GuiUpdateMessage {
     SkipTrack,
     SetPic(uint, ~[u8]),
     SetProgress(Option<(i64, i64)>),
+    Notify(~str),
 }
 
 #[deriving(Clone)]
@@ -134,6 +135,8 @@ struct InnerGui {
     priv toggle_button: *mut GtkWidget,
     priv skip_button: *mut GtkWidget,
     priv progress_bar: *mut GtkWidget,
+    priv status_bar: *mut GtkWidget,
+    priv status_bar_ci: Option<guint>,
 }
 
 impl InnerGui {
@@ -186,6 +189,8 @@ impl Gui {
             toggle_button: ptr::mut_null(),
             skip_button: ptr::mut_null(),
             progress_bar: ptr::mut_null(),
+            status_bar: ptr::mut_null(),
+            status_bar_ci: None,
         };
         Gui {
             ig: RWArc::new(inner_gui),
@@ -267,6 +272,12 @@ impl Gui {
                     ig.mixes_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
                     gtk_container_add(cast::transmute(scrolled_window), ig.mixes_box);
 
+                    ig.status_bar = gtk_statusbar_new();
+                    ig.status_bar_ci = "rusttracks".with_c_str(|cstr|
+                        Some(gtk_statusbar_get_context_id(cast::transmute(ig.status_bar), cstr))
+                    );
+                    gtk_box_pack_start(cast::transmute(main_box), ig.status_bar, 0, 0, 0);
+
                     let g_source = g_source_new(cast::transmute(&self.g_source_funcs),
                                                 mem::size_of::<GuiGSource>() as u32);
                     self.gui_g_source = cast::transmute::<*mut GSource, *mut GuiGSource>(g_source);
@@ -323,6 +334,22 @@ impl Gui {
 
     pub fn running(&self) -> bool {
         self.ig.read(|ig| ig.running)
+    }
+
+    pub fn notify(&self, message: &str) {
+        if !self.initialized() {
+            warn!("Not initialized, message `{}` is ignored", message);
+            return
+        }
+
+        unsafe {
+            self.ig.read(|ig| {
+                message.with_c_str(|cstr|
+                    gtk_statusbar_push(cast::transmute(ig.status_bar),
+                                       *ig.status_bar_ci.get_ref(), cstr)
+                );
+            });
+        }
     }
 
     fn fetch_play_token(&self) {
@@ -564,6 +591,7 @@ impl Gui {
             SkipTrack => self.skip_track(),
             SetPic(i, d) => self.set_pic(i, d),
             SetProgress(p) => self.set_progress(p),
+            Notify(m) => self.notify(m),
         }
 
         return true;

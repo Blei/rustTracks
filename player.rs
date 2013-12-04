@@ -263,9 +263,12 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
 
             gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-            error!("ERROR from element {}: {}", name,
-                from_c_str(cast::transmute_immut_unsafe((*err).message)));
+            let err_msg = from_c_str(cast::transmute_immut_unsafe((*err).message));
+
+            error!("ERROR from element {}: {}", name, err_msg);
             error!("Debugging info: {}", from_c_str(cast::transmute_immut_unsafe(dbg_info)));
+
+            gui.get_chan().send(gui::Notify(format!("Playback error: `{}`", err_msg)));
 
             g_error_free(err);
             g_free(cast::transmute(dbg_info));
