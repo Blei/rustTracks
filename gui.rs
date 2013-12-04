@@ -148,6 +148,47 @@ impl InnerGui {
                 if sensitive { 1 } else { 0 });
         }
     }
+
+    fn update_play_button_icon(&self) {
+        let icon_name = if self.player.is_playing() {
+            PAUSE_ICON_NAME
+        } else {
+            PLAY_ICON_NAME
+        };
+        unsafe {
+            let image = icon_name.with_c_str(|cstr|
+                gtk_image_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
+            );
+            gtk_button_set_image(cast::transmute(self.toggle_button), image);
+        }
+    }
+
+    fn set_progress(&mut self, progress: Option<(i64, i64)>) {
+        match progress {
+            Some((pos, dur)) => {
+                let fraction = (pos as f64) / ((dur - 1) as f64);
+                let pos_sec = pos / 1000000000;
+                let dur_sec = dur / 1000000000;
+                let text = format!("{}:{:02d} / {}:{:02d}",
+                                   pos_sec / 60, pos_sec % 60,
+                                   dur_sec / 60, dur_sec % 60);
+                unsafe {
+                    text.with_c_str(|cstr|
+                        gtk_progress_bar_set_text(cast::transmute(self.progress_bar), cstr)
+                    );
+                    gtk_progress_bar_set_fraction(cast::transmute(self.progress_bar), fraction);
+                }
+            }
+            None => {
+                unsafe {
+                    "".with_c_str(|cstr|
+                        gtk_progress_bar_set_text(cast::transmute(self.progress_bar), cstr)
+                    );
+                    gtk_progress_bar_set_fraction(cast::transmute(self.progress_bar), 0.);
+                }
+            }
+        }
+    }
 }
 
 pub struct Gui {
@@ -439,7 +480,9 @@ impl Gui {
             debug!("setting uri to `{}`", track.track_file_stream_url);
             ig.player.set_uri(track.track_file_stream_url, self);
             ig.player.play();
+            ig.update_play_button_icon();
             ig.control_buttons_set_sensitive(true);
+            ig.set_progress(None);
         });
     }
 
@@ -461,17 +504,7 @@ impl Gui {
         debug!("toggling!");
         self.ig.write(|ig| {
             ig.player.toggle();
-            let icon_name = if ig.player.is_playing() {
-                PAUSE_ICON_NAME
-            } else {
-                PLAY_ICON_NAME
-            };
-            unsafe {
-                let image = icon_name.with_c_str(|cstr|
-                    gtk_image_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
-                );
-                gtk_button_set_image(cast::transmute(ig.toggle_button), image);
-            }
+            ig.update_play_button_icon();
         });
     }
 
@@ -489,16 +522,18 @@ impl Gui {
             do task::spawn_sched(task::SingleThreaded) {
                 let next_track_json = webinterface::get_next_track(&pt, &mix);
                 let play_state = api::parse_play_state_response(&next_track_json);
-                chan.send(PlayTrack(play_state.contents.track));
+                match play_state.contents {
+                    Some(ps) => chan.send(PlayTrack(ps.track)),
+                    None => chan.send(Notify(~"Next track could not be obtained"))
+                }
             }
         });
     }
 
     fn skip_track(&self) {
         self.ig.write(|ig| {
-            ig.player.stop();
-            ig.current_track = None;
-            ig.control_buttons_set_sensitive(false);
+            ig.player.pause();
+            ig.update_play_button_icon();
 
             let i = ig.current_mix_index.unwrap();
             let mix = ig.mix_entries[i].mix.clone();
@@ -544,30 +579,7 @@ impl Gui {
     fn set_progress(&self, progress: Option<(i64, i64)>) {
         debug!("setting progress to {:?}", progress);
         self.ig.write(|ig| {
-            match progress {
-                Some((pos, dur)) => {
-                    let fraction = (pos as f64) / ((dur - 1) as f64);
-                    let pos_sec = pos / 1000000000;
-                    let dur_sec = dur / 1000000000;
-                    let text = format!("{}:{:02d} / {}:{:02d}",
-                                       pos_sec / 60, pos_sec % 60,
-                                       dur_sec / 60, dur_sec % 60);
-                    unsafe {
-                        text.with_c_str(|cstr|
-                            gtk_progress_bar_set_text(cast::transmute(ig.progress_bar), cstr)
-                        );
-                        gtk_progress_bar_set_fraction(cast::transmute(ig.progress_bar), fraction);
-                    }
-                }
-                None => {
-                    unsafe {
-                        "".with_c_str(|cstr|
-                            gtk_progress_bar_set_text(cast::transmute(ig.progress_bar), cstr)
-                        );
-                        gtk_progress_bar_set_fraction(cast::transmute(ig.progress_bar), 0.);
-                    }
-                }
-            }
+            ig.set_progress(progress);
         });
     }
 
