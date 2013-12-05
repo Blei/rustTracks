@@ -24,7 +24,9 @@ impl ReportCallback {
 
 impl tfs::TimerGSourceCallback for ReportCallback {
     fn callback(&mut self, _timer: &mut tfs::Timer) -> bool {
+        debug!("report: before sending");
         self.chan.send(gui::ReportCurrentTrack);
+        debug!("report: after sending");
         false
     }
 }
@@ -55,21 +57,29 @@ impl tfs::TimerGSourceCallback for ProgressCallback {
                 self.playbin, GST_FORMAT_TIME, &mut current_duration)
         };
 
+        debug!("progress: before sending");
         if success_duration != 0 && success_position != 0 {
             self.chan.send(gui::SetProgress(Some((current_position, current_duration))));
         } else {
             self.chan.send(gui::SetProgress(None));
         }
+        debug!("progress: after sending");
 
         true
     }
 }
 
-struct Player {
-    initialized: bool,
+#[deriving(Eq)]
+enum PlayState {
+    Uninit,
+    NoUri,
+    Play,
+    Pause,
+    WaitToPlay,
+}
 
-    uri_set: bool,
-    playing: bool,
+struct Player {
+    state: PlayState,
 
     playbin: *mut GstElement,
 
@@ -80,9 +90,7 @@ struct Player {
 impl Player {
     pub fn new() -> Player {
         Player {
-            initialized: false,
-            uri_set: false,
-            playing: false,
+            state: Uninit,
             playbin: ptr::mut_null(),
             report_timer: None,
             progress_timer: None,
@@ -110,7 +118,7 @@ impl Player {
             gst_bus_add_watch(bus, bus_callback,
                               cast::transmute::<&gui::Gui, gpointer>(gui));
         }
-        self.initialized = true;
+        self.state = NoUri;
         args2
     }
 
@@ -124,59 +132,90 @@ impl Player {
                 });
             });
         }
-        self.uri_set = true;
+        self.state = WaitToPlay;
     }
 
     pub fn play(&mut self) {
-        if !self.initialized {
-            fail!("player is not initialized");
-        }
-        if !self.uri_set {
-            debug!("uri not set, not playing");
-            return;
+        match self.state {
+            Uninit => fail!("player is not initialized"),
+            NoUri => fail!("no uri set"),
+            Play => {
+                info!("already playing");
+                return;
+            }
+            _ => ()
         }
         unsafe {
             gst_element_set_state(self.playbin, GST_STATE_PLAYING);
         }
-        self.playing = true;
+        self.state = Play;
     }
 
     pub fn pause(&mut self) {
-        if !self.initialized {
-            fail!("player is not initialized");
+        match self.state {
+            Uninit => fail!("player is not initialized"),
+            NoUri => fail!("uri not set"),
+            Pause => {
+                warn!("already pausing");
+                return;
+            }
+            _ => ()
         }
         unsafe {
             gst_element_set_state(self.playbin, GST_STATE_PAUSED);
         }
-        self.playing = false;
+        self.state = Pause;
     }
 
     pub fn stop(&mut self) {
-        if !self.initialized {
-            fail!("player is not initialized");
+        match self.state {
+            Uninit => fail!("player is not initialized"),
+            NoUri => {
+                warn!("already stopped");
+                return;
+            }
+            _ => ()
         }
         self.stop_timers();
         unsafe{
             gst_element_set_state(self.playbin, GST_STATE_READY);
         }
-        self.uri_set = false;
-        self.playing = false;
+        self.state = NoUri;
     }
 
     pub fn toggle(&mut self) {
-        if self.playing {
-            self.pause()
-        } else {
-            self.play()
+        match self.state {
+            Uninit => fail!("player is not initialized"),
+            NoUri => fail!("Uri is not set"),
+            Play | WaitToPlay => self.pause(),
+            Pause => self.play()
+        }
+    }
+
+    pub fn set_buffering(&mut self, is_buffering: bool) {
+        match self.state {
+            Uninit => fail!("player is not initialized"),
+            NoUri => fail!("Uri is not set"),
+            Play if is_buffering => {
+                unsafe {
+                    gst_element_set_state(self.playbin, GST_STATE_PAUSED);
+                }
+                self.state = WaitToPlay;
+            }
+            WaitToPlay if !is_buffering => {
+                unsafe {
+                    gst_element_set_state(self.playbin, GST_STATE_PLAYING);
+                }
+                self.state = Play;
+            }
+            _ => {
+                // Nothing to do
+            }
         }
     }
 
     pub fn is_playing(&self) -> bool {
-        self.playing
-    }
-
-    pub fn can_play(&self) -> bool {
-        self.uri_set
+        self.state == Play || self.state == WaitToPlay
     }
 
     pub fn start_timers(&mut self, chan: comm::SharedChan<gui::GuiUpdateMessage>) {
@@ -220,7 +259,7 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
-        if self.initialized {
+        if self.state != Uninit {
             unsafe {
                 if !self.playbin.is_null() {
                     gst_element_set_state(self.playbin, GST_STATE_NULL);
@@ -320,6 +359,14 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                     }
                 }
             }
+        }
+        GST_MESSAGE_BUFFERING => {
+            let mut percent = 0;
+            gst_message_parse_buffering(msg, &mut percent);
+            info!("BUFFERING form element `{}`, {}%", name, percent);
+            debug!("buffering: before sending");
+            gui.get_chan().send(gui::SetBuffering(percent < 100));
+            debug!("buffering: after sending");
         }
         _ => {
             if log_enabled!(logging::DEBUG) {

@@ -50,6 +50,7 @@ pub enum GuiUpdateMessage {
     PlayTrack(api::Track),
     ReportCurrentTrack,
     TogglePlaying,
+    SetBuffering(bool),
     NextTrack,
     SkipTrack,
     SetPic(uint, ~[u8]),
@@ -163,7 +164,7 @@ impl InnerGui {
         }
     }
 
-    fn control_buttons_set_sensitive(&self, sensitive: bool) {
+    fn control_buttons_set_sensitive(&mut self, sensitive: bool) {
         unsafe {
             gtk_widget_set_sensitive(self.toggle_button,
                 if sensitive { 1 } else { 0 });
@@ -172,7 +173,7 @@ impl InnerGui {
         }
     }
 
-    fn update_play_button_icon(&self) {
+    fn update_play_button_icon(&mut self) {
         let icon_name = if self.player.is_playing() {
             PAUSE_ICON_NAME
         } else {
@@ -569,6 +570,14 @@ impl Gui {
         });
     }
 
+    fn set_buffering(&self, is_buffering: bool) {
+        debug!("set_buffering({})", is_buffering);
+        self.ig.write(|ig| {
+            ig.player.set_buffering(is_buffering);
+            ig.update_play_button_icon();
+        });
+    }
+
     fn next_track(&self) {
         self.ig.write(|ig| {
             ig.player.stop();
@@ -676,6 +685,7 @@ impl Gui {
             PlayTrack(t) => self.play_track(t),
             ReportCurrentTrack => self.report_current_track(),
             TogglePlaying => self.toggle_playing(),
+            SetBuffering(b) => self.set_buffering(b),
             NextTrack => self.next_track(),
             SkipTrack => self.skip_track(),
             SetPic(i, d) => self.set_pic(i, d),
