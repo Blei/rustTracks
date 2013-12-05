@@ -26,6 +26,7 @@ impl tfs::TimerGSourceCallback for ReportCallback {
     fn callback(&mut self, _timer: &mut tfs::Timer) -> bool {
         debug!("report: before sending");
         self.chan.send(gui::ReportCurrentTrack);
+        // XXX: removing this logging statement makes the ui freeze sometimes
         debug!("report: after sending");
         false
     }
@@ -366,6 +367,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             info!("BUFFERING form element `{}`, {}%", name, percent);
             debug!("buffering: before sending");
             gui.get_chan().send(gui::SetBuffering(percent < 100));
+            // XXX: removing this logging statement makes the ui freeze sometimes
             debug!("buffering: after sending");
         }
         _ => {
