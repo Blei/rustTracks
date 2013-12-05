@@ -4,6 +4,7 @@ use std::libc;
 use std::mem;
 use std::ptr;
 use std::rt::comm;
+use strraw = std::str::raw;
 use std::task;
 use std::vec;
 use vecraw = std::vec::raw;
@@ -134,6 +135,7 @@ struct InnerGui {
     priv current_track: Option<api::Track>,
 
     priv main_window: *mut GtkWidget,
+    priv mixes_scrolled_window: *mut GtkWidget,
     priv mixes_box: *mut GtkWidget,
     priv toggle_button: *mut GtkWidget,
     priv skip_button: *mut GtkWidget,
@@ -154,6 +156,7 @@ impl InnerGui {
             current_mix_index: None,
             current_track: None,
             main_window: ptr::mut_null(),
+            mixes_scrolled_window: ptr::mut_null(),
             mixes_box: ptr::mut_null(),
             toggle_button: ptr::mut_null(),
             skip_button: ptr::mut_null(),
@@ -358,13 +361,24 @@ impl Gui {
                     gtk_box_pack_start(cast::transmute(main_box), ig.info_label, 0, 0, 0);
                     gtk_label_set_justify(cast::transmute(ig.info_label), GTK_JUSTIFY_CENTER);
 
-                    let scrolled_window = gtk_scrolled_window_new(ptr::mut_null(), ptr::mut_null());
-                    gtk_scrolled_window_set_policy(cast::transmute(scrolled_window),
+                    ig.mixes_scrolled_window = gtk_scrolled_window_new(ptr::mut_null(),
+                                                                       ptr::mut_null());
+                    gtk_scrolled_window_set_policy(cast::transmute(ig.mixes_scrolled_window),
                         GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-                    gtk_box_pack_start(cast::transmute(main_box), scrolled_window, 1, 1, 0);
+                    gtk_box_pack_start(cast::transmute(main_box),
+                                       ig.mixes_scrolled_window, 1, 1, 0);
 
                     ig.mixes_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-                    gtk_container_add(cast::transmute(scrolled_window), ig.mixes_box);
+                    gtk_container_add(cast::transmute(ig.mixes_scrolled_window), ig.mixes_box);
+
+                    let smart_id_entry = gtk_entry_new();
+                    gtk_box_pack_start(cast::transmute(main_box), smart_id_entry, 0, 0, 0);
+                    "activate".with_c_str(|cstr|
+                        g_signal_connect(cast::transmute(smart_id_entry),
+                                         cstr,
+                                         cast::transmute(smart_id_entry_activated),
+                                         cast::transmute::<&Gui, gpointer>(self))
+                    );
 
                     ig.status_bar = gtk_statusbar_new();
                     ig.status_bar_ci = "rusttracks".with_c_str(|cstr|
@@ -495,6 +509,10 @@ impl Gui {
                     }
                 }
                 gtk_widget_show_all(ig.mixes_box);
+                let adj = gtk_scrolled_window_get_vadjustment(
+                    cast::transmute(ig.mixes_scrolled_window));
+                let lower = gtk_adjustment_get_lower(adj);
+                gtk_adjustment_set_value(adj, lower);
             }
         });
     }
@@ -771,5 +789,13 @@ extern "C" fn skip_button_clicked(_button: *GtkButton, user_data: gpointer) {
     unsafe {
     let gui: &Gui = cast::transmute(user_data);
     gui.get_chan().send(SkipTrack);
+    }
+}
+
+extern "C" fn smart_id_entry_activated(entry: *mut GtkEntry, user_data: gpointer) {
+    unsafe {
+    let gui: &Gui = cast::transmute(user_data);
+    let id = strraw::from_c_str(gtk_entry_get_text(entry));
+    gui.get_chan().send(GetMixes(id));
     }
 }
