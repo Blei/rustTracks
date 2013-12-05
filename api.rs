@@ -7,7 +7,7 @@ fn maybe_extract_from_json_object<T: Decodable<json::Decoder>>(
         Some(s) => s.clone(),
         None => return None,
     };
-    let mut decoder = json::Decoder::init(found);
+    let mut decoder = json::Decoder::new(found);
     Decodable::decode(&mut decoder)
 }
 
@@ -75,7 +75,7 @@ pub struct CoverUrls {
 
 impl CoverUrls {
     pub fn from_json(json: json::Json) -> CoverUrls {
-        let mut decoder = json::Decoder::init(json);
+        let mut decoder = json::Decoder::new(json);
         Decodable::decode(&mut decoder)
     }
 }
@@ -170,7 +170,7 @@ struct Track {
 
 impl Track {
     pub fn from_json(json: json::Json) -> Track {
-        let mut decoder = json::Decoder::init(json);
+        let mut decoder = json::Decoder::new(json);
         Decodable::decode(&mut decoder)
     }
 }
@@ -186,7 +186,7 @@ struct PlayState {
 
 impl PlayState {
     pub fn from_json(json: json::Json) -> PlayState {
-        let mut decoder = json::Decoder::init(json);
+        let mut decoder = json::Decoder::new(json);
         Decodable::decode(&mut decoder)
     }
 }
