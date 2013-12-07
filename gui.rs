@@ -5,7 +5,6 @@ use std::mem;
 use std::ptr;
 use std::rt::comm;
 use strraw = std::str::raw;
-use std::task;
 use std::vec;
 use vecraw = std::vec::raw;
 

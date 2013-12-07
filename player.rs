@@ -24,10 +24,7 @@ impl ReportCallback {
 
 impl tfs::TimerGSourceCallback for ReportCallback {
     fn callback(&mut self, _timer: &mut tfs::Timer) -> bool {
-        debug!("report: before sending");
         self.chan.send(gui::ReportCurrentTrack);
-        // XXX: removing this logging statement makes the ui freeze sometimes
-        debug!("report: after sending");
         false
     }
 }
@@ -58,13 +55,11 @@ impl tfs::TimerGSourceCallback for ProgressCallback {
                 self.playbin, GST_FORMAT_TIME, &mut current_duration)
         };
 
-        debug!("progress: before sending");
         if success_duration != 0 && success_position != 0 {
             self.chan.send(gui::SetProgress(Some((current_position, current_duration))));
         } else {
             self.chan.send(gui::SetProgress(None));
         }
-        debug!("progress: after sending");
 
         true
     }
@@ -365,10 +360,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             let mut percent = 0;
             gst_message_parse_buffering(msg, &mut percent);
             info!("BUFFERING form element `{}`, {}%", name, percent);
-            debug!("buffering: before sending");
             gui.get_chan().send(gui::SetBuffering(percent < 100));
-            // XXX: removing this logging statement makes the ui freeze sometimes
-            debug!("buffering: after sending");
         }
         _ => {
             if log_enabled!(logging::DEBUG) {
