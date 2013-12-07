@@ -468,7 +468,7 @@ impl Gui {
 
         debug!("fetching play token");
         let chan = self.chan.clone();
-        do task::spawn_sched(task::SingleThreaded) {
+        do spawn {
             let pt_json = webinterface::get_play_token();
             let pt = api::parse_play_token_response(&pt_json);
             match pt.contents {
@@ -503,7 +503,7 @@ impl Gui {
                     // Fetch cover pic
                     let chan = self.chan.clone();
                     let pic_url_str = mixes[i].cover_urls.sq133.clone();
-                    do task::spawn_sched(task::SingleThreaded) {
+                    do spawn {
                         let pic_data = webinterface::get_data_from_url_str(pic_url_str);
                         chan.send(SetPic(i, pic_data));
                     }
@@ -520,7 +520,7 @@ impl Gui {
     fn get_mixes(&self, smart_id: ~str) {
         debug!("getting mixes for smart id '{}'", smart_id);
         let chan = self.get_chan().clone();
-        do task::spawn_sched(task::SingleThreaded) {
+        do spawn {
             let mix_set_json = webinterface::get_mix_set(smart_id);
             let mix_set = api::parse_mix_set_response(&mix_set_json);
             match mix_set.contents {
@@ -541,7 +541,7 @@ impl Gui {
                 debug!("playing mix with name `{}`", mix.name);
                 let chan = self.chan.clone();
                 let pt = ig.play_token.get_ref().clone();
-                do task::spawn_sched(task::SingleThreaded) {
+                do spawn {
                     let play_state_json = webinterface::get_play_state(&pt, &mix);
                     let play_state = api::parse_play_state_response(&play_state_json);
                     match play_state.contents {
@@ -575,7 +575,7 @@ impl Gui {
                 ig.current_track.get_ref().id,
             )
         );
-        do task::spawn_sched(task::SingleThreaded) {
+        do spawn {
             webinterface::report_track(&pt, ti, mi);
         }
     }
@@ -607,7 +607,7 @@ impl Gui {
             debug!("getting next track of mix with name `{}`", mix.name);
             let chan = self.chan.clone();
             let pt = ig.play_token.get_ref().clone();
-            do task::spawn_sched(task::SingleThreaded) {
+            do spawn {
                 let next_track_json = webinterface::get_next_track(&pt, &mix);
                 let play_state = api::parse_play_state_response(&next_track_json);
                 match play_state.contents {
@@ -628,7 +628,7 @@ impl Gui {
             debug!("skipping track of mix with name `{}`", mix.name);
             let chan = self.chan.clone();
             let pt = ig.play_token.get_ref().clone();
-            do task::spawn_sched(task::SingleThreaded) {
+            do spawn {
                 let skip_track_json = webinterface::get_skip_track(&pt, &mix);
                 let play_state = api::parse_play_state_response(&skip_track_json);
                 match play_state.contents {
