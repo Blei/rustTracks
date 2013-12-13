@@ -1,3 +1,4 @@
+#[pkgid="rusttracks"];
 #[feature(globs)];
 
 extern mod extra;
