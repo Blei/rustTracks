@@ -1,14 +1,13 @@
+use libc;
+
 use std::cast;
 use std::iter;
-use std::libc;
 use std::mem;
 use std::ptr;
-use std::rt::comm;
+use std::comm;
 use strraw = std::str::raw;
-use std::vec;
-use vecraw = std::vec::raw;
 
-use extra::arc::RWArc;
+use sync::{Arc,RWLock};
 
 use gtk::ffi::*;
 use gtk::*;
@@ -23,7 +22,7 @@ fn get_icon_pixbuf() -> *mut GdkPixbuf {
     unsafe {
         let mut err = ptr::mut_null();
         let stream = g_memory_input_stream_new_from_data(
-            vecraw::to_ptr(ICON_DATA) as *libc::c_void,
+            ICON_DATA.as_ptr() as *libc::c_void,
             ICON_DATA.len() as i64, cast::transmute(0));
         let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
         assert!(pixbuf != ptr::mut_null());
@@ -35,6 +34,11 @@ fn get_icon_pixbuf() -> *mut GdkPixbuf {
 static PLAY_ICON_NAME: &'static str = "media-playback-start";
 static PAUSE_ICON_NAME: &'static str = "media-playback-pause";
 static SKIP_ICON_NAME: &'static str = "media-skip-forward";
+
+enum MixesOrdering {
+    Popular = 0,
+    New = 1,
+}
 
 struct GuiGSource {
     g_source: GSource,
@@ -53,14 +57,13 @@ pub enum GuiUpdateMessage {
     SetBuffering(bool),
     NextTrack,
     SkipTrack,
-    SetPic(uint, ~[u8]),
+    SetPic(uint, Vec<u8>),
     SetProgress(Option<(i64, i64)>),
     Notify(~str),
     StartTimers,
     PauseTimers,
 }
 
-#[deriving(Clone)]
 struct MixEntry {
     mix: api::Mix,
 
@@ -71,12 +74,12 @@ struct MixEntry {
 impl MixEntry {
     fn new(mix: api::Mix, mix_table_entry: &(*mut Gui, uint)) -> MixEntry {
         let (widget, image) = unsafe {
-            let box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+            let entry_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
 
             let label = mix.name.with_c_str(|c_str| {
                 gtk_label_new(c_str)
             });
-            gtk_box_pack_start(cast::transmute(box), label, 1, 1, 0);
+            gtk_box_pack_start(cast::transmute(entry_box), label, 1, 1, 0);
             gtk_label_set_line_wrap(label as *mut GtkLabel, 1);
             gtk_label_set_line_wrap_mode(label as *mut GtkLabel, PANGO_WRAP_WORD_CHAR);
             gtk_misc_set_alignment(label as *mut GtkMisc, 0f32, 0.5f32);
@@ -86,10 +89,10 @@ impl MixEntry {
             gdk_pixbuf_unref(pixbuf1);
             let image = gtk_image_new_from_pixbuf(pixbuf2);
             gdk_pixbuf_unref(pixbuf2);
-            gtk_box_pack_end(cast::transmute(box), image, 0, 0, 0);
+            gtk_box_pack_end(cast::transmute(entry_box), image, 0, 0, 0);
 
             let button_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-            gtk_box_pack_end(cast::transmute(box), button_box, 0, 0, 0);
+            gtk_box_pack_end(cast::transmute(entry_box), button_box, 0, 0, 0);
 
             let button = "Play".with_c_str(|p| {
                 gtk_button_new_with_label(p)
@@ -102,7 +105,7 @@ impl MixEntry {
                                  cast::transmute::<&(*mut Gui, uint), gpointer>(mix_table_entry));
             });
 
-            (box, image as *mut GtkImage)
+            (entry_box, image as *mut GtkImage)
         };
 
         MixEntry {
@@ -122,26 +125,24 @@ impl MixEntry {
 }
 
 struct InnerGui {
-    priv initialized: bool,
-    priv running: bool,
+    initialized: bool,
+    running: bool,
 
-    priv player: player::Player,
+    mix_entries: Vec<MixEntry>,
+    play_token: Option<api::PlayToken>,
 
-    priv mix_entries: ~[MixEntry],
-    priv play_token: Option<api::PlayToken>,
+    current_mix_index: Option<uint>,
+    current_track: Option<api::Track>,
 
-    priv current_mix_index: Option<uint>,
-    priv current_track: Option<api::Track>,
-
-    priv main_window: *mut GtkWidget,
-    priv mixes_scrolled_window: *mut GtkWidget,
-    priv mixes_box: *mut GtkWidget,
-    priv toggle_button: *mut GtkWidget,
-    priv skip_button: *mut GtkWidget,
-    priv progress_bar: *mut GtkWidget,
-    priv info_label: *mut GtkWidget,
-    priv status_bar: *mut GtkWidget,
-    priv status_bar_ci: Option<guint>,
+    main_window: *mut GtkWidget,
+    mixes_scrolled_window: *mut GtkWidget,
+    mixes_box: *mut GtkWidget,
+    toggle_button: *mut GtkWidget,
+    skip_button: *mut GtkWidget,
+    progress_bar: *mut GtkWidget,
+    info_label: *mut GtkWidget,
+    status_bar: *mut GtkWidget,
+    status_bar_ci: Option<guint>,
 }
 
 impl InnerGui {
@@ -149,8 +150,7 @@ impl InnerGui {
         InnerGui {
             initialized: false,
             running: false,
-            player: player::Player::new(),
-            mix_entries: ~[],
+            mix_entries: Vec::new(),
             play_token: None,
             current_mix_index: None,
             current_track: None,
@@ -175,8 +175,8 @@ impl InnerGui {
         }
     }
 
-    fn update_play_button_icon(&mut self) {
-        let icon_name = if self.player.is_playing() {
+    fn update_play_button_icon(&mut self, is_playing: bool) {
+        let icon_name = if is_playing {
             PAUSE_ICON_NAME
         } else {
             PLAY_ICON_NAME
@@ -236,7 +236,8 @@ impl InnerGui {
                 }
             }
             Some(ref track) => {
-                let mut text = format!("'{}' by {}", track.name, track.performer);
+                let mut text = StrBuf::new();
+                text.push_str(format!("'{}' by {}", track.name, track.performer));
                 match track.release_name {
                     Some(ref rn) => {
                         text.push_str(format!("\nAlbum: {}", *rn));
@@ -248,7 +249,7 @@ impl InnerGui {
                     None => ()
                 }
                 unsafe {
-                    text.with_c_str(|cstr|
+                    text.as_slice().with_c_str(|cstr|
                         gtk_label_set_text(cast::transmute(self.info_label), cstr)
                     );
                 }
@@ -258,16 +259,22 @@ impl InnerGui {
 }
 
 pub struct Gui {
-    priv ig: RWArc<InnerGui>,
-    priv port: comm::Port<GuiUpdateMessage>,
-    priv chan: comm::SharedChan<GuiUpdateMessage>,
-    priv gui_g_source: *mut GuiGSource,
-    priv g_source_funcs: GSourceFuncs,
+    ig: Arc<RWLock<InnerGui>>,
+
+    receiver: comm::Receiver<GuiUpdateMessage>,
+    sender: comm::Sender<GuiUpdateMessage>,
+    buffered_msg: Option<GuiUpdateMessage>,
+
+    gui_g_source: *mut GuiGSource,
+    g_source_funcs: GSourceFuncs,
+
+    player: player::Player,
 
     // this is such a hack...
-    priv mix_index_table: ~[(*mut Gui, uint)],
+    mix_index_table: Vec<(*mut Gui, uint)>,
 }
 
+#[unsafe_destructor]
 impl Drop for Gui {
     fn drop(&mut self) {
         self.quit();
@@ -282,31 +289,34 @@ impl Drop for Gui {
 
 impl Gui {
     pub fn new() -> Gui {
-        let (port, chan) = comm::stream();
+        let (sender, receiver) = comm::channel();
         let inner_gui = InnerGui::new();
         Gui {
-            ig: RWArc::new(inner_gui),
-            port: port,
-            chan: comm::SharedChan::new(chan),
+            ig: Arc::new(RWLock::new(inner_gui)),
+            receiver: receiver,
+            sender: sender,
+            buffered_msg: None,
             gui_g_source: ptr::mut_null(),
             g_source_funcs: Struct__GSourceFuncs {
-                prepare: prepare_gui_g_source,
-                check: check_gui_g_source,
-                dispatch: dispatch_gui_g_source,
-                finalize: unsafe { cast::transmute(0) },
-                closure_callback: unsafe { cast::transmute(0) },
-                closure_marshal: unsafe{ cast::transmute(0) },
+                prepare: Some(prepare_gui_g_source),
+                check: Some(check_gui_g_source),
+                dispatch: Some(dispatch_gui_g_source),
+                finalize: None,
+                closure_callback: None,
+                closure_marshal: None,
             },
-            mix_index_table: ~[],
+            player: player::Player::new(),
+            mix_index_table: Vec::new(),
         }
     }
 
     pub fn init(&mut self, args: ~[~str]) {
-        self.ig.write(|ig| {
-            if !ig.initialized {
+        if !self.ig.read().initialized {
+            let args2;
+            {
+                let mut ig = self.ig.write();
                 unsafe {
-                    let args2 = gtk_init_with_args(args.clone());
-                    let _args3 = ig.player.init(args2, self);
+                    args2 = gtk_init_with_args(args.clone());
                     ig.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
                     gtk_window_set_default_size(cast::transmute(ig.main_window), 400, 500);
                     "destroy".with_c_str(|destroy| {
@@ -370,8 +380,23 @@ impl Gui {
                     ig.mixes_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
                     gtk_container_add(cast::transmute(ig.mixes_scrolled_window), ig.mixes_box);
 
+                    let smart_id_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+                    gtk_box_pack_start(cast::transmute(main_box), smart_id_box, 0, 0, 0);
+
+                    let smart_id_ordering_combo = gtk_combo_box_text_new();
+                    gtk_box_pack_start(cast::transmute(smart_id_box), smart_id_ordering_combo, 0, 0, 0);
+                    "popular".with_c_str(|cstr|
+                        gtk_combo_box_text_append(cast::transmute(smart_id_ordering_combo),
+                                         ptr::null(), cstr)
+                    );
+                    "new".with_c_str(|cstr|
+                        gtk_combo_box_text_append(cast::transmute(smart_id_ordering_combo),
+                                         ptr::null(), cstr)
+                    );
+                    gtk_combo_box_set_active(cast::transmute(smart_id_ordering_combo), Popular as libc::c_int);
+
                     let smart_id_entry = gtk_entry_new();
-                    gtk_box_pack_start(cast::transmute(main_box), smart_id_entry, 0, 0, 0);
+                    gtk_box_pack_start(cast::transmute(smart_id_box), smart_id_entry, 1, 1, 0);
                     "activate".with_c_str(|cstr|
                         g_signal_connect(cast::transmute(smart_id_entry),
                                          cstr,
@@ -389,37 +414,32 @@ impl Gui {
                                                 mem::size_of::<GuiGSource>() as guint);
                     self.gui_g_source = cast::transmute::<*mut GSource, *mut GuiGSource>(g_source);
                     (*self.gui_g_source).gui_ptr = cast::transmute::<&Gui, *Gui>(self);
-                };
+                }
                 ig.initialized = true;
             }
-        });
+            let sender = self.get_sender().clone();
+            let _args3 = self.player.init(args2, sender);
+        }
     }
 
     pub fn run(&self) {
-        let needs_run = self.ig.write(|ig| {
-            let needs_run = !ig.running;
-            if needs_run {
-                ig.running = true;
-                unsafe {
-                    gtk_widget_show_all(ig.main_window);
-                    let context = g_main_context_default();
-                    g_source_attach(cast::transmute::<*mut GuiGSource, *mut GSource>(self.gui_g_source),
-                                    context);
-                }
-            }
-            needs_run
-        });
-        if needs_run {
+        if !self.ig.read().running {
+            self.ig.write().running = true;
             unsafe {
+                gtk_widget_show_all(self.ig.read().main_window);
+                let context = g_main_context_default();
+                g_source_attach(cast::transmute::<*mut GuiGSource, *mut GSource>(self.gui_g_source),
+                                context);
                 gtk_main();
             }
         }
     }
 
-    pub fn quit(&self) {
-        self.ig.write(|ig| {
-            if ig.initialized {
-                ig.player.stop();
+    pub fn quit(&mut self) {
+        if self.ig.read().initialized {
+            self.player.stop();
+            {
+                let mut ig = self.ig.write();
                 if ig.main_window != ptr::mut_null() {
                     unsafe {
                         gtk_widget_destroy(ig.main_window);
@@ -432,15 +452,11 @@ impl Gui {
                 }
                 ig.initialized = false;
             }
-        });
+        }
     }
 
     pub fn initialized(&self) -> bool {
-        self.ig.read(|ig| ig.initialized)
-    }
-
-    pub fn running(&self) -> bool {
-        self.ig.read(|ig| ig.running)
+        self.ig.read().initialized
     }
 
     pub fn notify(&self, message: &str) {
@@ -450,62 +466,59 @@ impl Gui {
         }
 
         unsafe {
-            self.ig.read(|ig| {
+            let ig = self.ig.read();
                 message.with_c_str(|cstr|
                     gtk_statusbar_push(cast::transmute(ig.status_bar),
                                        *ig.status_bar_ci.get_ref(), cstr)
                 );
-            });
         }
     }
 
     fn fetch_play_token(&self) {
-        if self.ig.read(|ig| ig.play_token.is_some()) {
+        if self.ig.read().play_token.is_some() {
             debug!("play token already exists, ignoring request");
             return;
         }
 
         debug!("fetching play token");
-        let chan = self.chan.clone();
-        do spawn {
+        let sender = self.sender.clone();
+        spawn(proc() {
             let pt_json = webinterface::get_play_token();
             let pt = api::parse_play_token_response(&pt_json);
             match pt.contents {
-                Some(pt) => chan.send(SetPlayToken(pt)),
-                None => chan.send(Notify(~"Playtoken could not be obtained"))
+                Some(pt) => sender.send(SetPlayToken(pt)),
+                None => sender.send(Notify(~"Playtoken could not be obtained"))
             }
-        }
+        });
     }
 
     fn set_play_token(&self, pt: api::PlayToken) {
-        debug!("setting play token to `{}`", *pt);
-        self.ig.write(|ig| {
-            ig.play_token = Some(pt.clone());
-        });
+        debug!("setting play token to `{}`", pt.s);
+        self.ig.write().play_token = Some(pt.clone());
     }
 
     fn set_mixes(&mut self, mixes: ~[api::Mix]) {
-        self.mix_index_table = vec::from_fn(mixes.len(), |i| {
-            (ptr::to_mut_unsafe_ptr(self), i)
+        self.mix_index_table = Vec::from_fn(mixes.len(), |i| {
+            (self as *mut Gui, i)
         });
-        self.ig.write(|ig| {
+        let mut ig = self.ig.write();
             ig.mix_entries.clear();
             debug!("setting mixes, length {}", mixes.len());
             unsafe {
                 clear_gtk_container(cast::transmute(ig.mixes_box));
                 for i in iter::range(0, mixes.len()) {
-                    let mix_entry = MixEntry::new(mixes[i].clone(), &self.mix_index_table[i]);
+                    let mix_entry = MixEntry::new(mixes[i].clone(), self.mix_index_table.get(i));
                     gtk_box_pack_start(cast::transmute(ig.mixes_box),
                         mix_entry.widget, 0, 1, 0);
                     ig.mix_entries.push(mix_entry);
 
                     // Fetch cover pic
-                    let chan = self.chan.clone();
+                    let sender = self.sender.clone();
                     let pic_url_str = mixes[i].cover_urls.sq133.clone();
-                    do spawn {
+                    spawn(proc() {
                         let pic_data = webinterface::get_data_from_url_str(pic_url_str);
-                        chan.send(SetPic(i, pic_data));
-                    }
+                        sender.send(SetPic(i, pic_data));
+                    });
                 }
                 gtk_widget_show_all(ig.mixes_box);
                 let adj = gtk_scrolled_window_get_vadjustment(
@@ -513,137 +526,137 @@ impl Gui {
                 let lower = gtk_adjustment_get_lower(adj);
                 gtk_adjustment_set_value(adj, lower);
             }
-        });
     }
 
     fn get_mixes(&self, smart_id: ~str) {
         debug!("getting mixes for smart id '{}'", smart_id);
-        let chan = self.get_chan().clone();
-        do spawn {
+        let sender = self.get_sender().clone();
+        spawn(proc() {
             let mix_set_json = webinterface::get_mix_set(smart_id);
             let mix_set = api::parse_mix_set_response(&mix_set_json);
             match mix_set.contents {
-                Some(ms) => chan.send(UpdateMixes(ms.mixes)),
-                None => chan.send(Notify(~"Mix list could not be obtained"))
+                Some(ms) => sender.send(UpdateMixes(ms.mixes)),
+                None => sender.send(Notify(~"Mix list could not be obtained"))
             }
-        }
+        });
     }
 
     fn play_mix(&self, i: uint) {
         debug!("playing mix with index {}", i);
-        self.ig.write(|ig| {
+        let mut ig = self.ig.write();
             if i >= ig.mix_entries.len() {
                 warn!("index is out of bounds, ignoring message");
             } else {
                 ig.current_mix_index = Some(i);
-                let mix = ig.mix_entries[i].mix.clone();
+                let mix = ig.mix_entries.get(i).mix.clone();
                 debug!("playing mix with name `{}`", mix.name);
-                let chan = self.chan.clone();
+                let sender = self.sender.clone();
                 let pt = ig.play_token.get_ref().clone();
-                do spawn {
+                spawn(proc() {
                     let play_state_json = webinterface::get_play_state(&pt, &mix);
                     let play_state = api::parse_play_state_response(&play_state_json);
                     match play_state.contents {
-                        Some(ps) => chan.send(PlayTrack(ps.track)),
-                        None => chan.send(Notify(~"Could not start playing mix"))
+                        Some(ps) => sender.send(PlayTrack(ps.track)),
+                        None => sender.send(Notify(~"Could not start playing mix"))
                     }
-                }
+                });
             }
-        });
     }
 
-    fn play_track(&self, track: api::Track) {
-        self.ig.write(|ig| {
-            debug!("playing track `{}`", track.name);
-            ig.set_current_track(track.clone());
-            debug!("setting uri to `{}`", track.track_file_stream_url);
-            ig.player.set_uri(track.track_file_stream_url);
-            ig.player.play();
-            ig.update_play_button_icon();
-            ig.control_buttons_set_sensitive(true);
-            ig.set_progress(None);
-        });
+    fn play_track(&mut self, track: api::Track) {
+        let mut ig = self.ig.write();
+        debug!("playing track `{}`", track.name);
+        ig.set_current_track(track.clone());
+        debug!("setting uri to `{}`", track.track_file_stream_url);
+        self.player.set_uri(track.track_file_stream_url);
+        self.player.play();
+        ig.update_play_button_icon(self.player.is_playing());
+        ig.control_buttons_set_sensitive(true);
+        ig.set_progress(None);
     }
 
     fn report_current_track(&self) {
         debug!("reporting current track");
-        let (pt, ti, mi) = self.ig.read(|ig|
+        let ig = self.ig.read();
+        let (pt, ti, mi) =
             (
                 ig.play_token.get_ref().clone(),
-                ig.mix_entries[*ig.current_mix_index.get_ref()].mix.id,
+                ig.mix_entries.get(*ig.current_mix_index.get_ref()).mix.id,
                 ig.current_track.get_ref().id,
-            )
-        );
-        do spawn {
+            );
+        spawn(proc() {
             webinterface::report_track(&pt, ti, mi);
+        });
+    }
+
+    fn toggle_playing(&mut self) {
+        debug!("toggling!");
+        self.player.toggle();
+        let is_playing = self.player.is_playing();
+        {
+            let mut ig = self.ig.write();
+            ig.update_play_button_icon(is_playing);
         }
     }
 
-    fn toggle_playing(&self) {
-        debug!("toggling!");
-        self.ig.write(|ig| {
-            ig.player.toggle();
-            ig.update_play_button_icon();
-        });
-    }
-
-    fn set_buffering(&self, is_buffering: bool) {
+    fn set_buffering(&mut self, is_buffering: bool) {
         debug!("set_buffering({})", is_buffering);
-        self.ig.write(|ig| {
-            ig.player.set_buffering(is_buffering);
-            ig.update_play_button_icon();
-        });
+        self.player.set_buffering(is_buffering);
+        let is_playing = self.player.is_playing();
+        {
+            let mut ig = self.ig.write();
+            ig.update_play_button_icon(is_playing);
+        }
     }
 
-    fn next_track(&self) {
-        self.ig.write(|ig| {
-            ig.player.stop();
+    fn next_track(&mut self) {
+        self.player.stop();
+        let mut ig = self.ig.write();
             ig.remove_current_track();
             ig.control_buttons_set_sensitive(false);
 
             let i = ig.current_mix_index.unwrap();
-            let mix = ig.mix_entries[i].mix.clone();
+            let mix = ig.mix_entries.get(i).mix.clone();
             debug!("getting next track of mix with name `{}`", mix.name);
-            let chan = self.chan.clone();
+            let sender = self.sender.clone();
             let pt = ig.play_token.get_ref().clone();
-            do spawn {
+            spawn(proc() {
                 let next_track_json = webinterface::get_next_track(&pt, &mix);
                 let play_state = api::parse_play_state_response(&next_track_json);
                 match play_state.contents {
-                    Some(ps) => chan.send(PlayTrack(ps.track)),
-                    None => chan.send(Notify(~"Next track could not be obtained"))
+                    Some(ps) => sender.send(PlayTrack(ps.track)),
+                    None => sender.send(Notify(~"Next track could not be obtained"))
                 }
+            });
+    }
+
+    fn skip_track(&mut self) {
+        self.player.pause();
+        let is_playing = self.player.is_playing();
+        let mut ig = self.ig.write();
+        ig.update_play_button_icon(is_playing);
+
+        let i = ig.current_mix_index.unwrap();
+        let mix = ig.mix_entries.get(i).mix.clone();
+        debug!("skipping track of mix with name `{}`", mix.name);
+        let sender = self.sender.clone();
+        let pt = ig.play_token.get_ref().clone();
+        spawn(proc() {
+            let skip_track_json = webinterface::get_skip_track(&pt, &mix);
+            let play_state = api::parse_play_state_response(&skip_track_json);
+            match play_state.contents {
+                Some(ps) => sender.send(PlayTrack(ps.track)),
+                None => sender.send(Notify(~"Could not skip track"))
             }
         });
     }
 
-    fn skip_track(&self) {
-        self.ig.write(|ig| {
-            ig.player.pause();
-            ig.update_play_button_icon();
-
-            let i = ig.current_mix_index.unwrap();
-            let mix = ig.mix_entries[i].mix.clone();
-            debug!("skipping track of mix with name `{}`", mix.name);
-            let chan = self.chan.clone();
-            let pt = ig.play_token.get_ref().clone();
-            do spawn {
-                let skip_track_json = webinterface::get_skip_track(&pt, &mix);
-                let play_state = api::parse_play_state_response(&skip_track_json);
-                match play_state.contents {
-                    Some(ps) => chan.send(PlayTrack(ps.track)),
-                    None => chan.send(Notify(~"Could not skip track"))
-                }
-            }
-        });
-    }
-
-    fn set_pic(&self, i: uint, mut pic_data: ~[u8]) {
+    fn set_pic(&self, i: uint, pic_data: Vec<u8>) {
         let pixbuf = unsafe {
             let mut err = ptr::mut_null();
 
             let stream = g_memory_input_stream_new_from_data(
-                vecraw::to_mut_ptr(pic_data) as *libc::c_void,
+                pic_data.as_ptr() as *libc::c_void,
                 pic_data.len() as i64, cast::transmute(0));
             let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
 
@@ -651,49 +664,62 @@ impl Gui {
             pixbuf
         };
 
-        self.ig.write(|ig| {
+        let mut ig = self.ig.write();
             if i >= ig.mix_entries.len() {
                 warn!("set_pic: index {} is out of range, only {} mix_entries",
                       i, ig.mix_entries.len());
             } else {
-                ig.mix_entries[i].set_pic(pixbuf);
+                ig.mix_entries.get_mut(i).set_pic(pixbuf);
             }
-        });
 
         unsafe {
             gdk_pixbuf_unref(pixbuf);
         }
     }
 
-    fn start_timers(&self) {
+    fn start_timers(&mut self) {
         debug!("starting timers");
-        self.ig.write(|ig| {
-            ig.player.start_timers(self.chan.clone());
-        });
+        self.player.start_timers(self.sender.clone());
     }
 
-    fn pause_timers(&self) {
+    fn pause_timers(&mut self) {
         debug!("pausing timers");
-        self.ig.write(|ig| {
-            ig.player.pause_timers();
-        });
+        self.player.pause_timers();
     }
 
     fn set_progress(&self, progress: Option<(i64, i64)>) {
         debug!("setting progress to {:?}", progress);
-        self.ig.write(|ig| {
-            ig.set_progress(progress);
-        });
+        self.ig.write().set_progress(progress);
+    }
+
+    pub fn test_receive(&mut self) -> bool {
+        if self.buffered_msg.is_some() {
+            return true;
+        }
+
+        match self.receiver.try_recv() {
+            Ok(msg) => {
+                self.buffered_msg = Some(msg);
+                return true;
+            }
+            Err(comm::Empty) => {
+                return false;
+            }
+            Err(comm::Disconnected) => {
+                fail!("wut? noone allowed you to disconnect!")
+            }
+        }
     }
 
     /// This can only be called from one thread at a time, not
     /// synchronized!!
     pub fn dispatch_message(&mut self) -> bool {
-        if !self.port.peek() {
+        if !self.test_receive() {
             return false;
         }
 
-        match self.port.recv() {
+        let msg = self.buffered_msg.take_unwrap();
+        match msg {
             FetchPlayToken => self.fetch_play_token(),
             SetPlayToken(pt) => self.set_play_token(pt),
             UpdateMixes(m) => self.set_mixes(m),
@@ -716,8 +742,8 @@ impl Gui {
     }
 
     /// This channel is synchronized, call it as often as you want
-    pub fn get_chan<'a>(&'a self) -> &'a comm::SharedChan<GuiUpdateMessage> {
-        &self.chan
+    pub fn get_sender<'a>(&'a self) -> &'a comm::Sender<GuiUpdateMessage> {
+        &self.sender
     }
 }
 
@@ -737,27 +763,28 @@ unsafe fn get_gui_from_src(src: *mut GSource) -> & mut Gui {
     cast::transmute::<*Gui, &mut Gui>((*gui_g_source).gui_ptr)
 }
 
-extern "C" fn prepare_gui_g_source(src: *mut GSource, timeout: *mut gint) -> gboolean {
+extern "C" fn prepare_gui_g_source(_src: *mut GSource, timeout: *mut gint) -> gboolean {
     unsafe {
         // Simplified: This is the amount of milliseconds between each call to this function.
         // This kind of simulates polling of the port, but meh, good enough for now.
         // FIXME: integrate ports into the main loop correctly
-        *timeout = 40;
+        *timeout = -1;
     }
 
-    let gui = unsafe { get_gui_from_src(src) };
-    if gui.port.peek() { 1 } else { 0 }
+    0
 }
 
 extern "C" fn check_gui_g_source(src: *mut GSource) -> gboolean {
+    // TODO suboptimal to return 1 here always, optimally we should check the port
+    // first. But peek is gone and it's probably not that much of a difference...
     let gui = unsafe { get_gui_from_src(src) };
-    if gui.port.peek() { 1 } else { 0 }
+    if gui.test_receive() { 1 } else { 0 }
 }
 
 extern "C" fn dispatch_gui_g_source(src: *mut GSource,
         _callback: GSourceFunc, _user_data: gpointer) -> gboolean {
     let gui = unsafe { get_gui_from_src(src) };
-    assert!(gui.port.peek());
+    debug!("dispatching...")
     while gui.dispatch_message() { }
 
     // Returning 0 here would remove this GSource from the main loop
@@ -765,7 +792,7 @@ extern "C" fn dispatch_gui_g_source(src: *mut GSource,
 }
 
 extern "C" fn close_button_pressed(_object: *GtkWidget, user_data: gpointer) {
-    let gui: &Gui = unsafe { cast::transmute(user_data) };
+    let gui: &mut Gui = unsafe { cast::transmute(user_data) };
     gui.quit();
 }
 
@@ -773,21 +800,21 @@ extern "C" fn play_button_clicked(_button: *GtkButton, user_data: gpointer) {
     unsafe {
     let &(gui_ptr, i): &(*Gui, uint) = cast::transmute(user_data);
     let gui = &*gui_ptr;
-    gui.get_chan().send(PlayMix(i));
+    gui.get_sender().send(PlayMix(i));
     }
 }
 
 extern "C" fn toggle_button_clicked(_button: *GtkButton, user_data: gpointer) {
     unsafe {
     let gui: &Gui = cast::transmute(user_data);
-    gui.get_chan().send(TogglePlaying);
+    gui.get_sender().send(TogglePlaying);
     }
 }
 
 extern "C" fn skip_button_clicked(_button: *GtkButton, user_data: gpointer) {
     unsafe {
     let gui: &Gui = cast::transmute(user_data);
-    gui.get_chan().send(SkipTrack);
+    gui.get_sender().send(SkipTrack);
     }
 }
 
@@ -795,6 +822,6 @@ extern "C" fn smart_id_entry_activated(entry: *mut GtkEntry, user_data: gpointer
     unsafe {
     let gui: &Gui = cast::transmute(user_data);
     let id = strraw::from_c_str(gtk_entry_get_text(entry));
-    gui.get_chan().send(GetMixes(id));
+    gui.get_sender().send(GetMixes(id));
     }
 }

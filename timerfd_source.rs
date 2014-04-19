@@ -1,17 +1,21 @@
 //! Integration of Linux' timerfd into the GLib main loop as a GSource
 
+// Mostly mirroring the names in C
+#![allow(non_camel_case_types)]
+
+use libc;
+
 use std::cast;
-use std::libc::*;
+use std::default;
 use std::mem;
 use std::os;
-use std::unstable::intrinsics;
 
 use gtk::ffi::*;
 
 #[deriving(Default)]
 struct timespec {
     tv_sec: time_t,
-    tv_nsec: c_long,
+    tv_nsec: libc::c_long,
 }
 
 #[deriving(Default)]
@@ -21,34 +25,36 @@ struct itimerspec {
 }
 
 extern "C" {
-    fn timerfd_create(clockid: c_int, flags: c_int) -> c_int;
-    fn timerfd_settime(fd: c_int, flags: c_int,
-                       new_value: *itimerspec, old_value: *mut itimerspec) -> c_int;
-    fn timerfd_gettime(fd: c_int, curr_value: *mut itimerspec) -> c_int;
+    fn timerfd_create(clockid: libc::c_int, flags: libc::c_int) -> libc::c_int;
+    fn timerfd_settime(fd: libc::c_int, flags: libc::c_int,
+                       new_value: *itimerspec, old_value: *mut itimerspec) -> libc::c_int;
+    fn timerfd_gettime(fd: libc::c_int, curr_value: *mut itimerspec) -> libc::c_int;
 }
 
-static CLOCK_MONOTONIC: c_int = 1;
-static TFD_CLOEXEC: c_int = 0o2000000;
-static TFD_NONBLOCK: c_int = 0o0004000;
+static CLOCK_MONOTONIC: libc::c_int = 1;
+static TFD_CLOEXEC: libc::c_int = 0o2000000;
+static TFD_NONBLOCK: libc::c_int = 0o0004000;
 
 /// Slightly nicer interface to the C functions.
-struct TimerFD(c_int);
+pub struct TimerFD {
+    fd: libc::c_int,
+}
 
 impl TimerFD {
-    fn new() -> TimerFD {
+    pub fn new() -> TimerFD {
         unsafe {
             let fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
             if fd == -1 {
                 fail!("Failed to create timerfd: `{}`", os::last_os_error());
             }
-            TimerFD(fd)
+            TimerFD { fd: fd }
         }
     }
 
-    fn settime(&mut self, new_value: &itimerspec) -> itimerspec {
+    pub fn settime(&mut self, new_value: &itimerspec) -> itimerspec {
         unsafe {
-            let mut result = intrinsics::uninit();
-            let ret = timerfd_settime(**self, 0, new_value, &mut result);
+            let mut result = mem::uninit();
+            let ret = timerfd_settime(self.fd, 0, new_value, &mut result);
             if ret != 0 {
                 fail!("Failed to set time of timerfd: `{}`", os::last_os_error());
             }
@@ -56,10 +62,10 @@ impl TimerFD {
         }
     }
 
-    fn gettime(&self) -> itimerspec {
+    pub fn gettime(&self) -> itimerspec {
         unsafe {
-            let mut result = intrinsics::uninit();
-            let ret = timerfd_gettime(**self, &mut result);
+            let mut result = mem::uninit();
+            let ret = timerfd_gettime(self.fd, &mut result);
             if ret != 0 {
                 fail!("Failed to get time from timerfd: `{}`", os::last_os_error());
             }
@@ -68,18 +74,26 @@ impl TimerFD {
     }
 }
 
+impl Drop for TimerFD {
+    fn drop(&mut self) {
+        unsafe {
+            close(self.fd);
+        }
+    }
+}
+
 /// The actually used timer
 pub struct Timer {
-    priv timerfd: TimerFD,
-    priv current: itimerspec,
-    priv active: bool,
+    timerfd: TimerFD,
+    current: itimerspec,
+    active: bool,
 }
 
 impl Timer {
     pub fn new() -> Timer {
         Timer {
             timerfd: TimerFD::new(),
-            current: Default::default(),
+            current: default::Default::default(),
             active: false,
         }
     }
@@ -113,35 +127,29 @@ impl Timer {
         if !self.active {
             fail!("calling stop on an non-active timer");
         }
-        let zero = Default::default();
+        let zero = default::Default::default();
         let res = self.current = self.timerfd.settime(&zero);
         self.active = false;
         res
     }
 }
 
-impl Drop for TimerFD {
-    fn drop(&mut self) {
-        unsafe {
-            close(**self);
-        }
-    }
-}
-
-pub trait TimerGSourceCallback {
+pub trait TimerGSourceCallback: Send {
     fn callback(&mut self, timer: &mut Timer) -> bool;
 }
 
 struct TimerGSourceInner {
-    priv g_source: *mut GSource,
+    g_source: *mut GSource,
     timer: Timer,
-    priv callback_object: ~TimerGSourceCallback: Freeze + Send,
+    callback_object: ~TimerGSourceCallback: Send,
 }
 
-struct TimerGSource(~TimerGSourceInner);
+pub struct TimerGSource {
+    inner: ~TimerGSourceInner,
+}
 
 impl TimerGSource {
-    pub fn new(callback_object: ~TimerGSourceCallback: Freeze + Send) -> TimerGSource {
+    pub fn new(callback_object: ~TimerGSourceCallback: Send) -> TimerGSource {
         let tgsi = ~TimerGSourceInner {
             g_source: unsafe {
                 g_source_new(cast::transmute(&TIMER_GSOURCE_FUNCS),
@@ -152,26 +160,35 @@ impl TimerGSource {
         };
         unsafe {
             g_source_set_callback(tgsi.g_source,
-                dispatch_timerfd_g_source_for_realz,
+                Some(dispatch_timerfd_g_source_for_realz),
                 cast::transmute(&*tgsi),
                 cast::transmute(0));
         }
-        TimerGSource(tgsi)
+        TimerGSource { inner: tgsi }
     }
 
     pub fn attach(&mut self, context: *mut GMainContext) {
         unsafe {
-            let _tag = g_source_add_unix_fd(self.g_source, *self.timer.timerfd, G_IO_IN);
-            g_source_attach(self.g_source, context);
+            let _tag = g_source_add_unix_fd(self.inner.g_source,
+                                            self.inner.timer.timerfd.fd, G_IO_IN);
+            g_source_attach(self.inner.g_source, context);
         }
+    }
+
+    pub fn timer<'a>(&'a self) -> &'a Timer {
+        &self.inner.timer
+    }
+
+    pub fn mut_timer<'a>(&'a mut self) -> &'a mut Timer {
+        &mut self.inner.timer
     }
 }
 
 impl Drop for TimerGSource {
     fn drop(&mut self) {
         unsafe {
-            g_source_destroy(self.g_source);
-            g_source_unref(self.g_source);
+            g_source_destroy(self.inner.g_source);
+            g_source_unref(self.inner.g_source);
         }
     }
 }
@@ -183,10 +200,10 @@ extern "C" fn dispatch_timerfd_g_source_for_realz(user_data: gpointer) -> gboole
 
     // Have to read, so old timer ticks are not messing up epoll
     let mut buffer = [0, ..8];
-    let n = unsafe { read(*tgs.timer.timerfd, cast::transmute(&mut buffer), 8) };
+    let n = unsafe { read(tgs.timer.timerfd.fd, cast::transmute(&mut buffer), 8) };
     if n != 8 {
         // Can happen when the callback reads the fd as well
-        assert_eq!(os::errno() as c_int, EAGAIN);
+        assert_eq!(os::errno() as libc::c_int, libc::EAGAIN);
     }
 
     if cont { 1 } else { 0 }
@@ -197,26 +214,13 @@ extern "C" fn dispatch_timerfd_g_source(src: *mut GSource,
 
     let tgs: &mut TimerGSourceInner = unsafe { cast::transmute(user_data) };
     assert_eq!(tgs.g_source, src);
-    callback(user_data)
+    callback.expect("How could this happen? This must be set!")(user_data)
 }
 
-/// To get around limitation of casting NULL function pointers in static data.
-/// TODO: maybe implement this in bindgen?
-struct My_Struct__GSourceFuncs {
-    prepare: Option<extern "C" fn(arg1: *mut GSource, arg2: *mut gint) -> gboolean>,
-    check: Option<extern "C" fn(arg1: *mut GSource) -> gboolean>,
-    dispatch: extern "C" fn
-                  (arg1: *mut GSource, arg2: GSourceFunc, arg3: gpointer)
-                  -> gboolean,
-    finalize: Option<extern "C" fn(arg1: *mut GSource)>,
-    closure_callback: Option<GSourceFunc>,
-    closure_marshal: Option<GSourceDummyMarshal>,
-}
-
-static mut TIMER_GSOURCE_FUNCS: My_Struct__GSourceFuncs = My_Struct__GSourceFuncs {
+static mut TIMER_GSOURCE_FUNCS: GSourceFuncs = Struct__GSourceFuncs {
     prepare: None,
     check: None,
-    dispatch: dispatch_timerfd_g_source,
+    dispatch: Some(dispatch_timerfd_g_source),
     finalize: None,
     closure_callback: None,
     closure_marshal: None

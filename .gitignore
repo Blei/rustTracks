@@ -2,4 +2,4 @@
 rusttracks
 *.o
 tags
-main.d
+rusttracks.d
