@@ -5,7 +5,6 @@
 
 use libc;
 
-use std::cast;
 use std::default;
 use std::mem;
 use std::os;
@@ -150,9 +149,9 @@ pub struct TimerGSource {
 
 impl TimerGSource {
     pub fn new(callback_object: ~TimerGSourceCallback: Send) -> TimerGSource {
-        let tgsi = ~TimerGSourceInner {
+        let mut tgsi = ~TimerGSourceInner {
             g_source: unsafe {
-                g_source_new(cast::transmute(&TIMER_GSOURCE_FUNCS),
+                g_source_new(&mut TIMER_GSOURCE_FUNCS as *mut GSourceFuncs,
                              mem::size_of::<GSource>() as guint)
             },
             timer: Timer::new(),
@@ -161,8 +160,8 @@ impl TimerGSource {
         unsafe {
             g_source_set_callback(tgsi.g_source,
                 Some(dispatch_timerfd_g_source_for_realz),
-                cast::transmute(&*tgsi),
-                cast::transmute(0));
+                (&mut *tgsi as *mut TimerGSourceInner) as gpointer,
+                None);
         }
         TimerGSource { inner: tgsi }
     }
@@ -194,13 +193,15 @@ impl Drop for TimerGSource {
 }
 
 extern "C" fn dispatch_timerfd_g_source_for_realz(user_data: gpointer) -> gboolean {
-    let tgs: &mut TimerGSourceInner = unsafe { cast::transmute(user_data) };
+    let tgs = unsafe { &mut *(user_data as *mut TimerGSourceInner) };
 
     let cont = tgs.callback_object.callback(&mut tgs.timer);
 
     // Have to read, so old timer ticks are not messing up epoll
     let mut buffer = [0, ..8];
-    let n = unsafe { read(tgs.timer.timerfd.fd, cast::transmute(&mut buffer), 8) };
+    let n = unsafe { read(tgs.timer.timerfd.fd,
+                          (&mut buffer as *mut [i8, ..8]) as *mut libc::c_void,
+                          8) };
     if n != 8 {
         // Can happen when the callback reads the fd as well
         assert_eq!(os::errno() as libc::c_int, libc::EAGAIN);
@@ -212,7 +213,7 @@ extern "C" fn dispatch_timerfd_g_source_for_realz(user_data: gpointer) -> gboole
 extern "C" fn dispatch_timerfd_g_source(src: *mut GSource,
         callback: GSourceFunc, user_data: gpointer) -> gboolean {
 
-    let tgs: &mut TimerGSourceInner = unsafe { cast::transmute(user_data) };
+    let tgs = unsafe { &mut *(user_data as *mut TimerGSourceInner) };
     assert_eq!(tgs.g_source, src);
     callback.expect("How could this happen? This must be set!")(user_data)
 }

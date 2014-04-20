@@ -113,7 +113,7 @@ impl Player {
                 fail!("failed to create playbin");
             }
 
-            let bus = gst_pipeline_get_bus(cast::transmute(self.playbin));
+            let bus = gst_pipeline_get_bus(self.playbin as *mut GstPipeline);
             gst_bus_add_watch(bus, Some(bus_callback),
                               cast::transmute::<&comm::Sender<gui::GuiUpdateMessage>, gpointer>(
                                   &**self.gui_sender.get_ref()));
@@ -127,7 +127,7 @@ impl Player {
         unsafe {
             "uri".with_c_str(|property_c_str| {
                 uri.with_c_str(|uri_c_str| {
-                    g_object_set(cast::transmute(self.playbin),
+                    g_object_set(self.playbin as gpointer,
                         property_c_str, uri_c_str, ptr::null::<gchar>());
                 });
             });
@@ -263,7 +263,7 @@ impl Drop for Player {
             unsafe {
                 if !self.playbin.is_null() {
                     gst_element_set_state(self.playbin, GST_STATE_NULL);
-                    gst_object_unref(cast::transmute(self.playbin));
+                    gst_object_unref(self.playbin as gpointer);
                 }
                 gst_deinit();
             }
@@ -273,7 +273,7 @@ impl Drop for Player {
 
 extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpointer) -> gboolean {
     unsafe {
-    let gui_sender: &comm::Sender<gui::GuiUpdateMessage> = cast::transmute(data);
+    let gui_sender = &*(data as *comm::Sender<gui::GuiUpdateMessage>);
 
     let name = {
         let gst_obj = (*msg).src;
@@ -285,7 +285,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                 ~"null-name"
             } else {
                 let name = from_c_str(name_ptr as *libc::c_char);
-                g_free(cast::transmute(name_ptr));
+                g_free(name_ptr as gpointer);
                 name
             }
         }
@@ -306,7 +306,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             gui_sender.send(gui::Notify(format!("Playback error: `{}`", err_msg)));
 
             g_error_free(err);
-            g_free(cast::transmute(dbg_info));
+            g_free(dbg_info as gpointer);
         }
         GST_MESSAGE_WARNING => {
             if log_enabled!(log::WARN) {
@@ -320,7 +320,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                 warn!("Debugging info: {}", from_c_str(dbg_info as *libc::c_char));
 
                 g_error_free(err);
-                g_free(cast::transmute(dbg_info));
+                g_free(dbg_info as gpointer);
             }
         }
         GST_MESSAGE_INFO => {
@@ -335,7 +335,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                 info!("Debugging info: {}", from_c_str(dbg_info as *libc::c_char));
 
                 g_error_free(err);
-                g_free(cast::transmute(dbg_info));
+                g_free(dbg_info as gpointer);
             }
         }
         GST_MESSAGE_EOS => {
@@ -363,7 +363,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         GST_MESSAGE_BUFFERING => {
             let mut percent = 0;
             gst_message_parse_buffering(msg, &mut percent);
-            info!("BUFFERING form element `{}`, {}%", name, percent);
+            info!("BUFFERING from element `{}`, {}%", name, percent);
             gui_sender.send(gui::SetBuffering(percent < 100));
         }
         _ => {
