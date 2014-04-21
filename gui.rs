@@ -764,7 +764,11 @@ unsafe fn get_gui_from_src(src: *mut GSource) -> & mut Gui {
     &mut *(*gui_g_source).gui_ptr
 }
 
-extern "C" fn prepare_gui_g_source(_src: *mut GSource, _timeout: *mut gint) -> gboolean {
+extern "C" fn prepare_gui_g_source(_src: *mut GSource, timeout: *mut gint) -> gboolean {
+    unsafe {
+        // Wait at most 500ms before checking again.
+        *timeout = 500;
+    }
     0
 }
 

@@ -177,7 +177,7 @@ impl Player {
             _ => ()
         }
         self.stop_timers();
-        unsafe{
+        unsafe {
             gst_element_set_state(self.playbin, GST_STATE_READY);
         }
         self.state = NoUri;
@@ -347,6 +347,10 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                 let mut new_state = 0;
                 gst_message_parse_state_changed(msg, ptr::mut_null(),
                     &mut new_state, ptr::mut_null());
+                if log_enabled!(log::DEBUG) {
+                    let new_state_name = gst_element_state_get_name(new_state);
+                    debug!("new playbin state: {}", from_c_str(new_state_name));
+                }
                 match new_state {
                     GST_STATE_PLAYING => {
                         gui_sender.send(gui::StartTimers);
@@ -369,7 +373,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         _ => {
             if log_enabled!(log::DEBUG) {
                 let msg_type_cstr = gst_message_type_get_name((*msg)._type);
-                let msg_type_name = ::std::str::raw::from_c_str(msg_type_cstr);
+                let msg_type_name = from_c_str(msg_type_cstr);
                 debug!("message of type `{}` from element `{}`", msg_type_name, name);
             }
         }
