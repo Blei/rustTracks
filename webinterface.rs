@@ -1,3 +1,4 @@
+use std::io;
 use std::str;
 
 use serialize::json;
@@ -37,44 +38,44 @@ fn make_report_url(pt: &api::PlayToken, track_id: uint, mix_id: uint) -> url::Ur
         pt.s, track_id, mix_id)).unwrap()
 }
 
-pub fn get_data_from_url_str(s: &str) -> Vec<u8> {
+pub fn get_data_from_url_str(s: &str) -> io::IoResult<Vec<u8>> {
     let u = from_str(s).unwrap();
     get_data_from_url(u)
 }
 
-fn get_data_from_url(u: url::Url) -> Vec<u8> {
-    let mut request = RequestWriter::<NetworkStream>::new(Get, u).unwrap();
+fn get_data_from_url(u: url::Url) -> io::IoResult<Vec<u8>> {
+    let mut request = try!(RequestWriter::<NetworkStream>::new(Get, u));
     request.headers.insert(ExtensionHeader(~"X-Api-Key", api::API_KEY.to_str()));
     request.headers.insert(ExtensionHeader(~"X-Api-Version", api::API_VERSION.to_str()));
     let mut response = match request.read_response() {
         Ok(response) => response,
-        Err(_) => fail!("failed to fetch data"),
+        Err((_, io_err)) => return Err(io_err),
     };
-    response.read_to_end().unwrap()
+    response.read_to_end()
 }
 
-fn get_json_from_url(u: url::Url) -> json::Json {
-    let data = get_data_from_url(u);
-    json::from_str(str::from_utf8(data.as_slice()).unwrap()).unwrap()
+fn get_json_from_url(u: url::Url) -> io::IoResult<json::Json> {
+    let data = try!(get_data_from_url(u));
+    Ok(json::from_str(str::from_utf8(data.as_slice()).unwrap()).unwrap())
 }
 
-pub fn get_mix_set(smart_id: &str) -> json::Json {
+pub fn get_mix_set(smart_id: &str) -> io::IoResult<json::Json> {
     get_json_from_url(make_mixes_url(smart_id))
 }
 
-pub fn get_play_token() -> json::Json {
+pub fn get_play_token() -> io::IoResult<json::Json> {
     get_json_from_url(make_play_token_url())
 }
 
-pub fn get_play_state(pt: &api::PlayToken, mix: &api::Mix) -> json::Json {
+pub fn get_play_state(pt: &api::PlayToken, mix: &api::Mix) -> io::IoResult<json::Json> {
     get_json_from_url(make_play_url(pt, mix))
 }
 
-pub fn get_next_track(pt: &api::PlayToken, mix: &api::Mix) -> json::Json {
+pub fn get_next_track(pt: &api::PlayToken, mix: &api::Mix) -> io::IoResult<json::Json> {
     get_json_from_url(make_next_track_url(pt, mix))
 }
 
-pub fn get_skip_track(pt: &api::PlayToken, mix: &api::Mix) -> json::Json {
+pub fn get_skip_track(pt: &api::PlayToken, mix: &api::Mix) -> io::IoResult<json::Json> {
     get_json_from_url(make_skip_track_url(pt, mix))
 }
 

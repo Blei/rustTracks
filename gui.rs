@@ -423,6 +423,7 @@ impl Gui {
             return
         }
 
+        info!("Notification message: {}", message);
         unsafe {
             message.with_c_str(|cstr|
                 gtk_statusbar_push(self.status_bar as *mut GtkStatusbar,
@@ -440,7 +441,13 @@ impl Gui {
         debug!("fetching play token");
         let sender = self.sender.clone();
         spawn(proc() {
-            let pt_json = webinterface::get_play_token();
+            let pt_json = match webinterface::get_play_token() {
+                Ok(ptj) => ptj,
+                Err(io_err) => {
+                    sender.send(Notify(format!("Playtoken could not be obtained: `{}`", io_err)));
+                    return;
+                }
+            };
             let pt = api::parse_play_token_response(&pt_json);
             match pt.contents {
                 Some(pt) => sender.send(SetPlayToken(pt)),
@@ -472,7 +479,13 @@ impl Gui {
                 let sender = self.sender.clone();
                 let pic_url_str = mixes[i].cover_urls.sq133.clone();
                 spawn(proc() {
-                    let pic_data = webinterface::get_data_from_url_str(pic_url_str);
+                    let pic_data = match webinterface::get_data_from_url_str(pic_url_str) {
+                        Ok(pd) => pd,
+                        Err(io_err) => {
+                            sender.send(Notify(format!("Could not get picture: `{}`", io_err)));
+                            return;
+                        }
+                    };
                     sender.send(SetPic(i, pic_data));
                 });
             }
@@ -488,7 +501,13 @@ impl Gui {
         debug!("getting mixes for smart id '{}'", smart_id);
         let sender = self.get_sender().clone();
         spawn(proc() {
-            let mix_set_json = webinterface::get_mix_set(smart_id);
+            let mix_set_json = match webinterface::get_mix_set(smart_id) {
+                Ok(msj) => msj,
+                Err(io_err) => {
+                    sender.send(Notify(format!("Could not get mix list: `{}`", io_err)));
+                    return;
+                }
+            };
             let mix_set = api::parse_mix_set_response(&mix_set_json);
             match mix_set.contents {
                 Some(ms) => sender.send(UpdateMixes(ms.mixes)),
@@ -508,7 +527,13 @@ impl Gui {
             let sender = self.sender.clone();
             let pt = self.play_token.get_ref().clone();
             spawn(proc() {
-                let play_state_json = webinterface::get_play_state(&pt, &mix);
+                let play_state_json = match webinterface::get_play_state(&pt, &mix) {
+                    Ok(psj) => psj,
+                    Err(io_err) => {
+                        sender.send(Notify(format!("Could not start playing mix: `{}`", io_err)));
+                        return;
+                    }
+                };
                 let play_state = api::parse_play_state_response(&play_state_json);
                 match play_state.contents {
                     Some(ps) => sender.send(PlayTrack(ps.track)),
@@ -565,7 +590,13 @@ impl Gui {
         let sender = self.sender.clone();
         let pt = self.play_token.get_ref().clone();
         spawn(proc() {
-            let next_track_json = webinterface::get_next_track(&pt, &mix);
+            let next_track_json = match webinterface::get_next_track(&pt, &mix) {
+                Ok(ntj) => ntj,
+                Err(io_err) => {
+                    sender.send(Notify(format!("Could not get next track: `{}`", io_err)));
+                    return;
+                }
+            };
             let play_state = api::parse_play_state_response(&next_track_json);
             match play_state.contents {
                 Some(ps) => sender.send(PlayTrack(ps.track)),
@@ -584,7 +615,13 @@ impl Gui {
         let sender = self.sender.clone();
         let pt = self.play_token.get_ref().clone();
         spawn(proc() {
-            let skip_track_json = webinterface::get_skip_track(&pt, &mix);
+            let skip_track_json = match webinterface::get_skip_track(&pt, &mix) {
+                Ok(stj) => stj,
+                Err(io_err) => {
+                    sender.send(Notify(format!("Could not skip track: `{}`", io_err)));
+                    return;
+                }
+            };
             let play_state = api::parse_play_state_response(&skip_track_json);
             match play_state.contents {
                 Some(ps) => sender.send(PlayTrack(ps.track)),
