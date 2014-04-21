@@ -1,5 +1,7 @@
 .*.swp
-rusttracks
 *.o
+*.rlib
+*.so
+*.d
+rusttracks
 tags
-rusttracks.d

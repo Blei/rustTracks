@@ -12,6 +12,7 @@ extern crate url;
 
 extern crate gtk;
 extern crate http;
+extern crate timerfd_source;
 
 use std::comm;
 use std::os;
@@ -19,7 +20,6 @@ use std::os;
 mod api;
 mod gui;
 mod player;
-mod timerfd_source;
 mod webinterface;
 
 pub fn my_main() {

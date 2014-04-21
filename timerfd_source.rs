@@ -3,24 +3,59 @@
 // Mostly mirroring the names in C
 #![allow(non_camel_case_types)]
 
-use libc;
+extern crate gtk;
+extern crate libc;
 
 use std::default;
 use std::mem;
 use std::os;
 
-use gtk::ffi::*;
+use gtk = gtk::ffi;
 
-#[deriving(Default)]
-struct timespec {
-    tv_sec: time_t,
-    tv_nsec: libc::c_long,
+#[deriving(Default,Eq,TotalEq,Clone)]
+pub struct timespec {
+    pub tv_sec: libc::time_t,
+    pub tv_nsec: libc::c_long,
 }
 
-#[deriving(Default)]
-struct itimerspec {
-    it_interval: timespec,
-    it_value: timespec,
+impl timespec {
+    fn is_valid(&self) -> bool {
+        // according to `man timerfd_settime`
+        0 <= self.tv_nsec && self.tv_nsec <= 999_999_999
+    }
+
+    fn check_valid(&self) {
+        if !self.is_valid() {
+            fail!("timespec is not in valid range: {:?}", self)
+        }
+    }
+}
+
+impl Ord for timespec {
+    fn lt(&self, other: &timespec) -> bool {
+        self.check_valid();
+        other.check_valid();
+        self.tv_sec < other.tv_sec ||
+            (self.tv_sec == other.tv_sec &&
+             self.tv_nsec < other.tv_nsec)
+    }
+}
+
+impl TotalOrd for timespec {
+    fn cmp(&self, other: &timespec) -> Ordering {
+        self.check_valid();
+        other.check_valid();
+        match self.tv_sec.cmp(&other.tv_sec) {
+            Equal => self.tv_nsec.cmp(&other.tv_nsec),
+            ord => ord,
+        }
+    }
+}
+
+#[deriving(Default,Eq,TotalEq,Clone)]
+pub struct itimerspec {
+    pub it_interval: timespec,
+    pub it_value: timespec,
 }
 
 extern "C" {
@@ -76,7 +111,7 @@ impl TimerFD {
 impl Drop for TimerFD {
     fn drop(&mut self) {
         unsafe {
-            close(self.fd);
+            libc::close(self.fd);
         }
     }
 }
@@ -138,7 +173,7 @@ pub trait TimerGSourceCallback: Send {
 }
 
 struct TimerGSourceInner {
-    g_source: *mut GSource,
+    g_source: *mut gtk::GSource,
     timer: Timer,
     callback_object: ~TimerGSourceCallback: Send,
 }
@@ -151,26 +186,28 @@ impl TimerGSource {
     pub fn new(callback_object: ~TimerGSourceCallback: Send) -> TimerGSource {
         let mut tgsi = ~TimerGSourceInner {
             g_source: unsafe {
-                g_source_new(&mut TIMER_GSOURCE_FUNCS as *mut GSourceFuncs,
-                             mem::size_of::<GSource>() as guint)
+                gtk::g_source_new(&mut TIMER_GSOURCE_FUNCS as *mut gtk::GSourceFuncs,
+                                  mem::size_of::<gtk::GSource>() as gtk::guint)
             },
             timer: Timer::new(),
             callback_object: callback_object,
         };
         unsafe {
-            g_source_set_callback(tgsi.g_source,
+            gtk::g_source_set_callback(
+                tgsi.g_source,
                 Some(dispatch_timerfd_g_source_for_realz),
-                (&mut *tgsi as *mut TimerGSourceInner) as gpointer,
+                (&mut *tgsi as *mut TimerGSourceInner) as gtk::gpointer,
                 None);
         }
         TimerGSource { inner: tgsi }
     }
 
-    pub fn attach(&mut self, context: *mut GMainContext) {
+    pub fn attach(&mut self, context: *mut gtk::GMainContext) {
         unsafe {
-            let _tag = g_source_add_unix_fd(self.inner.g_source,
-                                            self.inner.timer.timerfd.fd, G_IO_IN);
-            g_source_attach(self.inner.g_source, context);
+            let _tag = gtk::g_source_add_unix_fd(self.inner.g_source,
+                                                 self.inner.timer.timerfd.fd,
+                                                 gtk::G_IO_IN);
+            gtk::g_source_attach(self.inner.g_source, context);
         }
     }
 
@@ -186,22 +223,25 @@ impl TimerGSource {
 impl Drop for TimerGSource {
     fn drop(&mut self) {
         unsafe {
-            g_source_destroy(self.inner.g_source);
-            g_source_unref(self.inner.g_source);
+            gtk::g_source_destroy(self.inner.g_source);
+            gtk::g_source_unref(self.inner.g_source);
         }
     }
 }
 
-extern "C" fn dispatch_timerfd_g_source_for_realz(user_data: gpointer) -> gboolean {
+extern "C" fn dispatch_timerfd_g_source_for_realz(user_data: gtk::gpointer) -> gtk::gboolean {
     let tgs = unsafe { &mut *(user_data as *mut TimerGSourceInner) };
 
     let cont = tgs.callback_object.callback(&mut tgs.timer);
 
     // Have to read, so old timer ticks are not messing up epoll
     let mut buffer = [0, ..8];
-    let n = unsafe { read(tgs.timer.timerfd.fd,
-                          (&mut buffer as *mut [i8, ..8]) as *mut libc::c_void,
-                          8) };
+    let n = unsafe {
+        libc::read(
+            tgs.timer.timerfd.fd,
+            (&mut buffer as *mut [i8, ..8]) as *mut libc::c_void,
+            8)
+    };
     if n != 8 {
         // Can happen when the callback reads the fd as well
         assert_eq!(os::errno() as libc::c_int, libc::EAGAIN);
@@ -210,15 +250,15 @@ extern "C" fn dispatch_timerfd_g_source_for_realz(user_data: gpointer) -> gboole
     if cont { 1 } else { 0 }
 }
 
-extern "C" fn dispatch_timerfd_g_source(src: *mut GSource,
-        callback: GSourceFunc, user_data: gpointer) -> gboolean {
+extern "C" fn dispatch_timerfd_g_source(src: *mut gtk::GSource,
+        callback: gtk::GSourceFunc, user_data: gtk::gpointer) -> gtk::gboolean {
 
     let tgs = unsafe { &mut *(user_data as *mut TimerGSourceInner) };
     assert_eq!(tgs.g_source, src);
     callback.expect("How could this happen? This must be set!")(user_data)
 }
 
-static mut TIMER_GSOURCE_FUNCS: GSourceFuncs = Struct__GSourceFuncs {
+static mut TIMER_GSOURCE_FUNCS: gtk::GSourceFuncs = gtk::Struct__GSourceFuncs {
     prepare: None,
     check: None,
     dispatch: Some(dispatch_timerfd_g_source),
