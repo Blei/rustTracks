@@ -1,7 +1,7 @@
 use libc;
 
-use std::cast;
 use std::comm;
+use std::mem;
 use std::ptr;
 use std::str::raw::from_c_str;
 
@@ -79,7 +79,7 @@ enum PlayState {
 
 pub struct Player {
     state: PlayState,
-    gui_sender: Option<~comm::Sender<gui::GuiUpdateMessage>>,
+    gui_sender: Option<Box<comm::Sender<gui::GuiUpdateMessage>>>,
 
     playbin: *mut GstElement,
 
@@ -98,11 +98,11 @@ impl Player {
         }
     }
 
-    pub fn init(&mut self, args: ~[~str], gui_sender: comm::Sender<gui::GuiUpdateMessage>) -> ~[~str] {
+    pub fn init(&mut self, args: Vec<String>, gui_sender: comm::Sender<gui::GuiUpdateMessage>) -> Vec<String> {
         let args2 = unsafe {
             gst_init_with_args(args)
         };
-        self.gui_sender = Some(~gui_sender);
+        self.gui_sender = Some(box gui_sender);
         unsafe {
             "playbin".with_c_str(|c_str| {
                 PLAYBIN_ELEMENT_NAME.with_c_str(|rtpb| {
@@ -115,7 +115,7 @@ impl Player {
 
             let bus = gst_pipeline_get_bus(self.playbin as *mut GstPipeline);
             gst_bus_add_watch(bus, Some(bus_callback),
-                              cast::transmute::<&comm::Sender<gui::GuiUpdateMessage>, gpointer>(
+                              mem::transmute::<&comm::Sender<gui::GuiUpdateMessage>, gpointer>(
                                   &**self.gui_sender.get_ref()));
         }
         self.state = NoUri;
@@ -222,8 +222,8 @@ impl Player {
         let context = unsafe { g_main_context_default() };
 
         if self.report_timer.is_none() {
-            let rc = ~ReportCallback::new(sender.clone());
-            let mut rt = tfs::TimerGSource::new(rc as ~tfs::TimerGSourceCallback: Send);
+            let rc = box ReportCallback::new(sender.clone());
+            let mut rt = tfs::TimerGSource::new(rc as Box<tfs::TimerGSourceCallback: Send>);
             rt.attach(context);
             rt.mut_timer().set_oneshot(30 * 1000);
             self.report_timer = Some(rt);
@@ -231,8 +231,8 @@ impl Player {
         self.report_timer.get_mut_ref().mut_timer().start();
 
         if self.progress_timer.is_none() {
-            let pc = ~ProgressCallback::new(sender, self.playbin);
-            let mut pt = tfs::TimerGSource::new(pc as ~tfs::TimerGSourceCallback: Send);
+            let pc = box ProgressCallback::new(sender, self.playbin);
+            let mut pt = tfs::TimerGSource::new(pc as Box<tfs::TimerGSourceCallback: Send>);
             pt.attach(context);
             pt.mut_timer().set_interval(1, 1 * 1000);
             self.progress_timer = Some(pt);
@@ -278,11 +278,11 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
     let name = {
         let gst_obj = (*msg).src;
         if gst_obj.is_null() {
-            ~"null-source"
+            "null-source".to_string()
         } else {
             let name_ptr = gst_object_get_name(gst_obj);
             if name_ptr.is_null() {
-                ~"null-name"
+                "null-name".to_string()
             } else {
                 let name = from_c_str(name_ptr as *libc::c_char);
                 g_free(name_ptr as gpointer);

@@ -3,6 +3,7 @@
 // Mostly mirroring the names in C
 #![allow(non_camel_case_types)]
 
+extern crate debug;
 extern crate gtk;
 extern crate libc;
 
@@ -87,7 +88,7 @@ impl TimerFD {
 
     pub fn settime(&mut self, new_value: &itimerspec) -> itimerspec {
         unsafe {
-            let mut result = mem::uninit();
+            let mut result = mem::uninitialized();
             let ret = timerfd_settime(self.fd, 0, new_value, &mut result);
             if ret != 0 {
                 fail!("Failed to set time of timerfd: `{}`", os::last_os_error());
@@ -98,7 +99,7 @@ impl TimerFD {
 
     pub fn gettime(&self) -> itimerspec {
         unsafe {
-            let mut result = mem::uninit();
+            let mut result = mem::uninitialized();
             let ret = timerfd_gettime(self.fd, &mut result);
             if ret != 0 {
                 fail!("Failed to get time from timerfd: `{}`", os::last_os_error());
@@ -175,16 +176,16 @@ pub trait TimerGSourceCallback: Send {
 struct TimerGSourceInner {
     g_source: *mut gtk::GSource,
     timer: Timer,
-    callback_object: ~TimerGSourceCallback: Send,
+    callback_object: Box<TimerGSourceCallback: Send>,
 }
 
 pub struct TimerGSource {
-    inner: ~TimerGSourceInner,
+    inner: Box<TimerGSourceInner>,
 }
 
 impl TimerGSource {
-    pub fn new(callback_object: ~TimerGSourceCallback: Send) -> TimerGSource {
-        let mut tgsi = ~TimerGSourceInner {
+    pub fn new(callback_object: Box<TimerGSourceCallback: Send>) -> TimerGSource {
+        let mut tgsi = box TimerGSourceInner {
             g_source: unsafe {
                 gtk::g_source_new(&mut TIMER_GSOURCE_FUNCS as *mut gtk::GSourceFuncs,
                                   mem::size_of::<gtk::GSource>() as gtk::guint)

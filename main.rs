@@ -4,6 +4,7 @@
 
 #[phase(syntax, link)] extern crate log;
 
+extern crate debug;
 extern crate libc;
 extern crate native;
 extern crate serialize;
@@ -26,9 +27,9 @@ pub fn my_main() {
     let mut gui = gui::Gui::new();
     gui.init(os::args());
 
-    gui.get_sender().send(gui::Notify(~"Welcome to RustTracks!"));
+    gui.get_sender().send(gui::Notify("Welcome to RustTracks!".to_string()));
     gui.get_sender().send(gui::FetchPlayToken);
-    gui.get_sender().send(gui::GetMixes(~"tags:folk:recent"));
+    gui.get_sender().send(gui::GetMixes("tags:folk:recent".to_string()));
 
     gui.run();
 }
