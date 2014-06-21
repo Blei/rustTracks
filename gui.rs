@@ -42,7 +42,7 @@ enum MixesOrdering {
 }
 
 struct GuiGSource {
-    g_source: GSource,
+    _g_source: GSource,
     gui_ptr: *mut Gui,
 }
 

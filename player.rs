@@ -68,7 +68,7 @@ impl tfs::TimerGSourceCallback for ProgressCallback {
     }
 }
 
-#[deriving(Eq)]
+#[deriving(PartialEq,Eq)]
 enum PlayState {
     Uninit,
     NoUri,
@@ -223,7 +223,7 @@ impl Player {
 
         if self.report_timer.is_none() {
             let rc = box ReportCallback::new(sender.clone());
-            let mut rt = tfs::TimerGSource::new(rc as Box<tfs::TimerGSourceCallback: Send>);
+            let mut rt = tfs::TimerGSource::new(rc as Box<tfs::TimerGSourceCallback+Send>);
             rt.attach(context);
             rt.mut_timer().set_oneshot(30 * 1000);
             self.report_timer = Some(rt);
@@ -232,7 +232,7 @@ impl Player {
 
         if self.progress_timer.is_none() {
             let pc = box ProgressCallback::new(sender, self.playbin);
-            let mut pt = tfs::TimerGSource::new(pc as Box<tfs::TimerGSourceCallback: Send>);
+            let mut pt = tfs::TimerGSource::new(pc as Box<tfs::TimerGSourceCallback+Send>);
             pt.attach(context);
             pt.mut_timer().set_interval(1, 1 * 1000);
             self.progress_timer = Some(pt);

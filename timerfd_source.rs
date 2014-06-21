@@ -13,7 +13,7 @@ use std::os;
 
 use gtk = gtk::ffi;
 
-#[deriving(Default,Eq,TotalEq,Clone)]
+#[deriving(Default,Eq,PartialEq,Clone)]
 pub struct timespec {
     pub tv_sec: libc::time_t,
     pub tv_nsec: libc::c_long,
@@ -32,7 +32,7 @@ impl timespec {
     }
 }
 
-impl Ord for timespec {
+impl PartialOrd for timespec {
     fn lt(&self, other: &timespec) -> bool {
         self.check_valid();
         other.check_valid();
@@ -42,7 +42,7 @@ impl Ord for timespec {
     }
 }
 
-impl TotalOrd for timespec {
+impl Ord for timespec {
     fn cmp(&self, other: &timespec) -> Ordering {
         self.check_valid();
         other.check_valid();
@@ -53,7 +53,7 @@ impl TotalOrd for timespec {
     }
 }
 
-#[deriving(Default,Eq,TotalEq,Clone)]
+#[deriving(Default,Eq,PartialEq,Clone)]
 pub struct itimerspec {
     pub it_interval: timespec,
     pub it_value: timespec,
@@ -176,7 +176,7 @@ pub trait TimerGSourceCallback: Send {
 struct TimerGSourceInner {
     g_source: *mut gtk::GSource,
     timer: Timer,
-    callback_object: Box<TimerGSourceCallback: Send>,
+    callback_object: Box<TimerGSourceCallback+Send>,
 }
 
 pub struct TimerGSource {
@@ -184,7 +184,7 @@ pub struct TimerGSource {
 }
 
 impl TimerGSource {
-    pub fn new(callback_object: Box<TimerGSourceCallback: Send>) -> TimerGSource {
+    pub fn new(callback_object: Box<TimerGSourceCallback+Send>) -> TimerGSource {
         let mut tgsi = box TimerGSourceInner {
             g_source: unsafe {
                 gtk::g_source_new(&mut TIMER_GSOURCE_FUNCS as *mut gtk::GSourceFuncs,

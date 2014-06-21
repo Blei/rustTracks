@@ -45,6 +45,7 @@ pub fn get_data_from_url_str(s: &str) -> io::IoResult<Vec<u8>> {
 }
 
 fn get_data_from_url(u: url::Url) -> io::IoResult<Vec<u8>> {
+    debug!("fetching data from `{}`", u);
     let mut request = try!(RequestWriter::<NetworkStream>::new(Get, u));
     request.headers.insert(ExtensionHeader("X-Api-Key".to_string(), api::API_KEY.to_str()));
     request.headers.insert(ExtensionHeader("X-Api-Version".to_string(), api::API_VERSION.to_str()));

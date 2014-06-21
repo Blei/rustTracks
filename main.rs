@@ -1,8 +1,9 @@
 #![feature(globs)]
 #![feature(phase)]
 #![feature(default_type_params)]
+#![feature(unsafe_destructor)]
 
-#[phase(syntax, link)] extern crate log;
+#[phase(plugin, link)] extern crate log;
 
 extern crate debug;
 extern crate libc;

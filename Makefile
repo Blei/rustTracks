@@ -1,8 +1,8 @@
 RUSTC ?= rustc
 LIBS = `pkg-config --libs gtk+-3.0 gstreamer-1.0`
-#RUSTC_FLAGS = --dep-info -g --opt-level=0
-RUSTC_FLAGS = --dep-info -O --cfg ndebug
-RUSTC_BIN_FLAGS = --crate-type bin -Z lto
+RUSTC_FLAGS = --dep-info -g --opt-level=0
+#RUSTC_FLAGS = --dep-info -O --cfg ndebug
+RUSTC_BIN_FLAGS = --crate-type bin #-Z lto
 RUSTC_RLIB_FLAGS = --crate-type rlib
 
 timerfd_source_libname = $(shell $(RUSTC) --crate-type rlib --crate-file-name timerfd_source.rs)
