@@ -4,7 +4,7 @@ use std::iter;
 use std::mem;
 use std::ptr;
 use std::comm;
-use strraw = std::str::raw;
+use strraw = std::string::raw;
 
 use gtk::ffi::*;
 use gtk::*;
@@ -23,7 +23,7 @@ fn get_icon_pixbuf() -> *mut GdkPixbuf {
     unsafe {
         let mut err = ptr::mut_null();
         let stream = g_memory_input_stream_new_from_data(
-            ICON_DATA.as_ptr() as *libc::c_void,
+            ICON_DATA.as_ptr() as *const libc::c_void,
             ICON_DATA.len() as i64, None);
         let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
         assert!(pixbuf != ptr::mut_null());
@@ -469,14 +469,14 @@ impl Gui {
         unsafe {
             clear_gtk_container(self.mixes_box as *mut GtkContainer);
             for i in iter::range(0, mixes.len()) {
-                let mix_entry = MixEntry::new(mixes.get(i).clone(), self.mix_index_table.get(i));
+                let mix_entry = MixEntry::new(mixes[i].clone(), &self.mix_index_table[i]);
                 gtk_box_pack_start(as_box(self.mixes_box),
                     mix_entry.widget, 0, 1, 0);
                 self.mix_entries.push(mix_entry);
 
                 // Fetch cover pic
                 let sender = self.sender.clone();
-                let pic_url_str = mixes.get(i).cover_urls.sq133.clone();
+                let pic_url_str = mixes[i].cover_urls.sq133.clone();
                 spawn(proc() {
                     let pic_data = match webinterface::get_data_from_url_str(pic_url_str.as_slice()) {
                         Ok(pd) => pd,
@@ -521,7 +521,7 @@ impl Gui {
             warn!("index is out of bounds, ignoring message");
         } else {
             self.current_mix_index = Some(i);
-            let mix = self.mix_entries.get(i).mix.clone();
+            let mix = self.mix_entries[i].mix.clone();
             debug!("playing mix with name `{}`", mix.name);
             let sender = self.sender.clone();
             let pt = self.play_token.get_ref().clone();
@@ -558,7 +558,7 @@ impl Gui {
         let (pt, ti, mi) =
             (
                 self.play_token.get_ref().clone(),
-                self.mix_entries.get(*self.current_mix_index.get_ref()).mix.id,
+                self.mix_entries[*self.current_mix_index.get_ref()].mix.id,
                 self.current_track.get_ref().id,
             );
         spawn(proc() {
@@ -584,7 +584,7 @@ impl Gui {
         self.control_buttons_set_sensitive(false);
 
         let i = self.current_mix_index.unwrap();
-        let mix = self.mix_entries.get(i).mix.clone();
+        let mix = self.mix_entries[i].mix.clone();
         debug!("getting next track of mix with name `{}`", mix.name);
         let sender = self.sender.clone();
         let pt = self.play_token.get_ref().clone();
@@ -609,7 +609,7 @@ impl Gui {
         self.update_play_button_icon();
 
         let i = self.current_mix_index.unwrap();
-        let mix = self.mix_entries.get(i).mix.clone();
+        let mix = self.mix_entries[i].mix.clone();
         debug!("skipping track of mix with name `{}`", mix.name);
         let sender = self.sender.clone();
         let pt = self.play_token.get_ref().clone();
@@ -634,7 +634,7 @@ impl Gui {
             let mut err = ptr::mut_null();
 
             let stream = g_memory_input_stream_new_from_data(
-                pic_data.as_ptr() as *libc::c_void,
+                pic_data.as_ptr() as *const libc::c_void,
                 pic_data.len() as i64, None);
             let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
 
@@ -758,7 +758,8 @@ fn clear_gtk_container(container: *mut GtkContainer) {
     }
 }
 
-unsafe fn get_gui_from_src(src: *mut GSource) -> & mut Gui {
+// The lifetime of 'static is a lie.
+unsafe fn get_gui_from_src(src: *mut GSource) -> &'static mut Gui {
     let gui_g_source = src as *mut GuiGSource;
     &mut *(*gui_g_source).gui_ptr
 }
@@ -786,31 +787,31 @@ extern "C" fn dispatch_gui_g_source(src: *mut GSource,
     return 1;
 }
 
-extern "C" fn close_button_pressed(_object: *GtkWidget, user_data: gpointer) {
+extern "C" fn close_button_pressed(_object: *const GtkWidget, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
     gui.quit();
 }
 
-extern "C" fn play_button_clicked(_button: *GtkButton, user_data: gpointer) {
+extern "C" fn play_button_clicked(_button: *const GtkButton, user_data: gpointer) {
     let (gui, i) = unsafe {
-        let &(gui_ptr, i): &(*Gui, uint) = mem::transmute(user_data);
+        let &(gui_ptr, i): &(*const Gui, uint) = mem::transmute(user_data);
         (&*gui_ptr, i)
     };
     gui.get_sender().send(PlayMix(i));
 }
 
-extern "C" fn toggle_button_clicked(_button: *GtkButton, user_data: gpointer) {
+extern "C" fn toggle_button_clicked(_button: *const GtkButton, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
     gui.get_sender().send(TogglePlaying);
 }
 
-extern "C" fn skip_button_clicked(_button: *GtkButton, user_data: gpointer) {
+extern "C" fn skip_button_clicked(_button: *const GtkButton, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
     gui.get_sender().send(SkipTrack);
 }
 
 extern "C" fn smart_id_entry_activated(entry: *mut GtkEntry, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
-    let id = unsafe { strraw::from_c_str(gtk_entry_get_text(entry)) };
+    let id = unsafe { strraw::from_buf(gtk_entry_get_text(entry) as *const u8) };
     gui.get_sender().send(GetMixes(id));
 }

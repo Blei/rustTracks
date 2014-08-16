@@ -1,7 +1,3 @@
 .*.swp
-*.o
-*.rlib
-*.so
-*.d
-rusttracks
-tags
+/tags
+/target

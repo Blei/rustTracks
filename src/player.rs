@@ -1,17 +1,16 @@
-use libc;
-
 use std::comm;
 use std::mem;
 use std::ptr;
-use std::str::raw::from_c_str;
+use std::string::raw::from_buf;
 
 use log;
 
 use gtk::*;
 use gtk::ffi::*;
 
+use timerfd;
+
 use gui;
-use tfs = timerfd_source;
 
 static PLAYBIN_ELEMENT_NAME: &'static str = "rusttracks-playbin";
 
@@ -25,8 +24,8 @@ impl ReportCallback {
     }
 }
 
-impl tfs::TimerGSourceCallback for ReportCallback {
-    fn callback(&mut self, _timer: &mut tfs::Timer) -> bool {
+impl timerfd::TimerGSourceCallback for ReportCallback {
+    fn callback(&mut self, _timer: &mut timerfd::Timer) -> bool {
         self.sender.send(gui::ReportCurrentTrack);
         false
     }
@@ -43,8 +42,8 @@ impl ProgressCallback {
     }
 }
 
-impl tfs::TimerGSourceCallback for ProgressCallback {
-    fn callback(&mut self, _timer: &mut tfs::Timer) -> bool {
+impl timerfd::TimerGSourceCallback for ProgressCallback {
+    fn callback(&mut self, _timer: &mut timerfd::Timer) -> bool {
         let mut current_position = 0;
         let mut current_duration = 0;
 
@@ -83,8 +82,8 @@ pub struct Player {
 
     playbin: *mut GstElement,
 
-    report_timer: Option<tfs::TimerGSource>,
-    progress_timer: Option<tfs::TimerGSource>,
+    report_timer: Option<timerfd::TimerGSource>,
+    progress_timer: Option<timerfd::TimerGSource>,
 }
 
 impl Player {
@@ -223,7 +222,7 @@ impl Player {
 
         if self.report_timer.is_none() {
             let rc = box ReportCallback::new(sender.clone());
-            let mut rt = tfs::TimerGSource::new(rc as Box<tfs::TimerGSourceCallback+Send>);
+            let mut rt = timerfd::TimerGSource::new(rc as Box<timerfd::TimerGSourceCallback+Send>);
             rt.attach(context);
             rt.mut_timer().set_oneshot(30 * 1000);
             self.report_timer = Some(rt);
@@ -232,7 +231,7 @@ impl Player {
 
         if self.progress_timer.is_none() {
             let pc = box ProgressCallback::new(sender, self.playbin);
-            let mut pt = tfs::TimerGSource::new(pc as Box<tfs::TimerGSourceCallback+Send>);
+            let mut pt = timerfd::TimerGSource::new(pc as Box<timerfd::TimerGSourceCallback+Send>);
             pt.attach(context);
             pt.mut_timer().set_interval(1, 1 * 1000);
             self.progress_timer = Some(pt);
@@ -273,7 +272,7 @@ impl Drop for Player {
 
 extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpointer) -> gboolean {
     unsafe {
-    let gui_sender = &*(data as *comm::Sender<gui::GuiUpdateMessage>);
+    let gui_sender = &*(data as *const comm::Sender<gui::GuiUpdateMessage>);
 
     let name = {
         let gst_obj = (*msg).src;
@@ -284,7 +283,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             if name_ptr.is_null() {
                 "null-name".to_string()
             } else {
-                let name = from_c_str(name_ptr as *libc::c_char);
+                let name = from_buf(name_ptr as *const u8);
                 g_free(name_ptr as gpointer);
                 name
             }
@@ -298,10 +297,10 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
 
             gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-            let err_msg = from_c_str((*err).message as *libc::c_char);
+            let err_msg = from_buf((*err).message as *const u8);
 
             error!("ERROR from element {}: {}", name, err_msg);
-            error!("Debugging info: {}", from_c_str(dbg_info as *libc::c_char));
+            error!("Debugging info: {}", from_buf(dbg_info as *const u8));
 
             gui_sender.send(gui::Notify(format!("Playback error: `{}`", err_msg)));
 
@@ -316,8 +315,8 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                 gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
                 warn!("WARNING from element {}: {}", name,
-                    from_c_str((*err).message as *libc::c_char));
-                warn!("Debugging info: {}", from_c_str(dbg_info as *libc::c_char));
+                      from_buf((*err).message as *const u8));
+                warn!("Debugging info: {}", from_buf(dbg_info as *const u8));
 
                 g_error_free(err);
                 g_free(dbg_info as gpointer);
@@ -331,8 +330,8 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                 gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
                 info!("INFO from element {}: {}", name,
-                    from_c_str((*err).message as *libc::c_char));
-                info!("Debugging info: {}", from_c_str(dbg_info as *libc::c_char));
+                      from_buf((*err).message as *const u8));
+                info!("Debugging info: {}", from_buf(dbg_info as *const u8));
 
                 g_error_free(err);
                 g_free(dbg_info as gpointer);
@@ -349,7 +348,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                     &mut new_state, ptr::mut_null());
                 if log_enabled!(log::DEBUG) {
                     let new_state_name = gst_element_state_get_name(new_state);
-                    debug!("new playbin state: {}", from_c_str(new_state_name));
+                    debug!("new playbin state: {}", from_buf(new_state_name as *const u8));
                 }
                 match new_state {
                     GST_STATE_PLAYING => {
@@ -373,7 +372,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         _ => {
             if log_enabled!(log::DEBUG) {
                 let msg_type_cstr = gst_message_type_get_name((*msg)._type);
-                let msg_type_name = from_c_str(msg_type_cstr);
+                let msg_type_name = from_buf(msg_type_cstr as *const u8);
                 debug!("message of type `{}` from element `{}`", msg_type_name, name);
             }
         }

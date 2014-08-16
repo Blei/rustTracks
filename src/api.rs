@@ -16,13 +16,13 @@ fn extract_from_json_object<T: Decodable<json::Decoder, json::DecoderError>>(
 
     maybe_extract_from_json_object(obj, id).unwrap_or_else(|| {
         fail!("Didn't find id `{}` or an incorrect type in `{}`",
-              *id, json::Object(box obj.clone()).to_str());
+              *id, json::Object(obj.clone()).to_string());
     })
 }
 
 fn expect_json_object<'a>(json: &'a json::Json) -> &'a json::Object {
     match *json {
-        json::Object(box ref obj) => obj,
+        json::Object(ref obj) => obj,
         _ => fail!("Expected an object, got {:?}", json),
     }
 }
@@ -201,7 +201,7 @@ pub fn parse_play_token_response(json: &json::Json) -> Response<PlayToken> {
 
 pub fn parse_play_state_response(json: &json::Json) -> Response<PlayState> {
     let obj = expect_json_object(json);
-    debug!("play state json {}", json.to_str());
+    debug!("play state json {}", json.to_string());
     let ps = obj.find(&"set".to_string()).map(|set| PlayState::from_json(set.clone()));
     Response::from_json(json, ps)
 }

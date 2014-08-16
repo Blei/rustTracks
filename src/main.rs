@@ -14,7 +14,7 @@ extern crate url;
 
 extern crate gtk;
 extern crate http;
-extern crate timerfd_source;
+extern crate timerfd;
 
 use std::comm;
 use std::os;
@@ -39,10 +39,10 @@ pub fn main() {
     let (sender, receiver) = comm::channel();
     spawn(proc() {
         my_main();
-        sender.send(1);
+        sender.send(1i);
     });
     receiver.recv();
 }
 
 #[start]
-fn start(argc: int, argv: **u8) -> int { native::start(argc, argv, main) }
+fn start(argc: int, argv: *const *const u8) -> int { native::start(argc, argv, main) }
