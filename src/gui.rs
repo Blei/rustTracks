@@ -136,14 +136,21 @@ pub struct Gui {
     current_track: Option<api::Track>,
 
     main_window: *mut GtkWidget,
+    main_notebook: *mut GtkWidget,
+
+    // These are all in the first notebook page, the playlists
+    playlists_notebook_index: libc::c_int,
     mixes_scrolled_window: *mut GtkWidget,
     mixes_box: *mut GtkWidget,
+    status_bar: *mut GtkWidget,
+    status_bar_ci: Option<guint>,
+
+    // And these are on the second page, the current list
+    current_notebook_index: libc::c_int,
     toggle_button: *mut GtkWidget,
     skip_button: *mut GtkWidget,
     progress_bar: *mut GtkWidget,
     info_label: *mut GtkWidget,
-    status_bar: *mut GtkWidget,
-    status_bar_ci: Option<guint>,
 
     receiver: comm::Receiver<GuiUpdateMessage>,
     sender: comm::Sender<GuiUpdateMessage>,
@@ -182,6 +189,8 @@ impl Gui {
             current_mix_index: None,
             current_track: None,
             main_window: ptr::mut_null(),
+            main_notebook: ptr::mut_null(),
+            playlists_notebook_index: -1,
             mixes_scrolled_window: ptr::mut_null(),
             mixes_box: ptr::mut_null(),
             toggle_button: ptr::mut_null(),
@@ -190,6 +199,7 @@ impl Gui {
             info_label: ptr::mut_null(),
             status_bar: ptr::mut_null(),
             status_bar_ci: None,
+            current_notebook_index: -1,
             receiver: receiver,
             sender: sender,
             buffered_msg: None,
@@ -288,46 +298,20 @@ impl Gui {
                 gtk_window_set_icon(self.main_window as *mut GtkWindow, icon);
                 gdk_pixbuf_unref(icon);
 
+                self.main_notebook = gtk_notebook_new();
+                gtk_container_add(self.main_window as *mut GtkContainer, self.main_notebook);
+
+                // First page: All Playlists
                 let main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-                gtk_container_add(self.main_window as *mut GtkContainer, main_box);
 
-                let control_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-                gtk_container_add(main_box as *mut GtkContainer, control_box);
-
-                self.toggle_button = PAUSE_ICON_NAME.with_c_str(|cstr|
-                    gtk_button_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
-                );
-                "clicked".with_c_str(|clicked| {
-                    g_signal_connect(self.toggle_button as gpointer,
-                                     clicked,
-                                     Some(mem::transmute(toggle_button_clicked)),
-                                     mem::transmute::<&Gui, gpointer>(self));
-                });
-                gtk_box_pack_start(control_box as *mut GtkBox, self.toggle_button, 0, 0, 0);
-
-                self.skip_button = SKIP_ICON_NAME.with_c_str(|cstr|
-                    gtk_button_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
-                );
-                "clicked".with_c_str(|clicked| {
-                    g_signal_connect(self.skip_button as gpointer,
-                                     clicked,
-                                     Some(mem::transmute(skip_button_clicked)),
-                                     mem::transmute::<&Gui, gpointer>(self));
-                });
-                gtk_box_pack_start(as_box(control_box), self.skip_button, 0, 0, 0);
-
-                self.progress_bar = gtk_progress_bar_new();
-                gtk_box_pack_end(as_box(control_box), self.progress_bar, 1, 1, 0);
-                "".with_c_str(|cstr|
-                    gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar, cstr)
-                );
-                gtk_progress_bar_set_show_text(self.progress_bar as *mut GtkProgressBar, 1);
-
-                self.control_buttons_set_sensitive(false);
-
-                self.info_label = gtk_label_new(ptr::null());
-                gtk_box_pack_start(as_box(main_box), self.info_label, 0, 0, 0);
-                gtk_label_set_justify(self.info_label as *mut GtkLabel, GTK_JUSTIFY_CENTER);
+                let playlist_label = "Playlists".with_c_str(|pl| gtk_label_new(pl));
+                self.playlists_notebook_index = gtk_notebook_append_page(
+                    self.main_notebook as *mut GtkNotebook,
+                    main_box,
+                    playlist_label);
+                if self.playlists_notebook_index < 0 {
+                    fail!("Adding first page to notebook failed");
+                }
 
                 self.mixes_scrolled_window = gtk_scrolled_window_new(ptr::mut_null(),
                                                                    ptr::mut_null());
@@ -369,6 +353,57 @@ impl Gui {
                 );
                 gtk_box_pack_start(as_box(main_box), self.status_bar, 0, 0, 0);
 
+                // Second page: Current Playlist
+                let current_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+
+                let current_label = "Current".with_c_str(|pl| gtk_label_new(pl));
+                self.current_notebook_index = gtk_notebook_append_page(
+                    self.main_notebook as *mut GtkNotebook,
+                    current_box,
+                    current_label);
+                if self.current_notebook_index < 0 {
+                    fail!("Adding second page to notebook failed");
+                }
+
+                let control_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+                gtk_container_add(current_box as *mut GtkContainer, control_box);
+
+                self.toggle_button = PAUSE_ICON_NAME.with_c_str(|cstr|
+                    gtk_button_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
+                );
+                "clicked".with_c_str(|clicked| {
+                    g_signal_connect(self.toggle_button as gpointer,
+                                     clicked,
+                                     Some(mem::transmute(toggle_button_clicked)),
+                                     mem::transmute::<&Gui, gpointer>(self));
+                });
+                gtk_box_pack_start(control_box as *mut GtkBox, self.toggle_button, 0, 0, 0);
+
+                self.skip_button = SKIP_ICON_NAME.with_c_str(|cstr|
+                    gtk_button_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
+                );
+                "clicked".with_c_str(|clicked| {
+                    g_signal_connect(self.skip_button as gpointer,
+                                     clicked,
+                                     Some(mem::transmute(skip_button_clicked)),
+                                     mem::transmute::<&Gui, gpointer>(self));
+                });
+                gtk_box_pack_start(as_box(control_box), self.skip_button, 0, 0, 0);
+
+                self.progress_bar = gtk_progress_bar_new();
+                gtk_box_pack_end(as_box(control_box), self.progress_bar, 1, 1, 0);
+                "".with_c_str(|cstr|
+                    gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar, cstr)
+                );
+                gtk_progress_bar_set_show_text(self.progress_bar as *mut GtkProgressBar, 1);
+
+                self.control_buttons_set_sensitive(false);
+
+                self.info_label = gtk_label_new(ptr::null());
+                gtk_box_pack_start(as_box(current_box), self.info_label, 0, 0, 0);
+                gtk_label_set_justify(self.info_label as *mut GtkLabel, GTK_JUSTIFY_CENTER);
+
+                // And finally the GSource
                 let g_source = g_source_new(&mut self.g_source_funcs as *mut GSourceFuncs,
                                             mem::size_of::<GuiGSource>() as guint);
                 self.gui_g_source = g_source as *mut GuiGSource;
@@ -525,6 +560,8 @@ impl Gui {
             debug!("playing mix with name `{}`", mix.name);
             let sender = self.sender.clone();
             let pt = self.play_token.get_ref().clone();
+            let notebook = self.main_notebook as *mut GtkNotebook;
+            let index = self.current_notebook_index;
             spawn(proc() {
                 let play_state_json = match webinterface::get_play_state(&pt, &mix) {
                     Ok(psj) => psj,
@@ -535,8 +572,13 @@ impl Gui {
                 };
                 let play_state = api::parse_play_state_response(&play_state_json);
                 match play_state.contents {
-                    Some(ps) => sender.send(PlayTrack(ps.track)),
-                None => sender.send(Notify("Could not start playing mix".to_string()))
+                    Some(ps) => {
+                        sender.send(PlayTrack(ps.track));
+                        unsafe {
+                            gtk_notebook_set_current_page(notebook, index);
+                        }
+                    }
+                    None => sender.send(Notify("Could not start playing mix".to_string()))
                 }
             });
         }
