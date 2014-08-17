@@ -153,11 +153,9 @@ impl Player {
     pub fn pause(&mut self) {
         match self.state {
             Uninit => fail!("player is not initialized"),
-            NoUri => fail!("uri not set"),
-            Pause => {
-                warn!("already pausing");
-                return;
-            }
+            // NoUri -> we're not playing anyway.
+            // Pause -> noop.
+            NoUri | Pause => return,
             _ => ()
         }
         unsafe {
@@ -185,7 +183,8 @@ impl Player {
     pub fn toggle(&mut self) {
         match self.state {
             Uninit => fail!("player is not initialized"),
-            NoUri => fail!("Uri is not set"),
+            // NoUri -> don't do anything
+            NoUri => warn!("Uri is not set"),
             Play | WaitToPlay => self.pause(),
             Pause => self.play()
         }

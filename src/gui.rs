@@ -20,11 +20,16 @@ fn as_box<T>(in_ptr: *mut T) -> *mut GtkBox {
 static ICON_DATA: &'static [u8] = include_bin!("8tracks-icon.jpg");
 
 fn get_icon_pixbuf() -> *mut GdkPixbuf {
+    get_pixbuf_from_data(ICON_DATA)
+}
+
+fn get_pixbuf_from_data(pic_data: &[u8]) -> *mut GdkPixbuf {
     unsafe {
         let mut err = ptr::mut_null();
+
         let stream = g_memory_input_stream_new_from_data(
-            ICON_DATA.as_ptr() as *const libc::c_void,
-            ICON_DATA.len() as i64, None);
+            pic_data.as_ptr() as *const libc::c_void,
+            pic_data.len() as i64, None);
         let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
         assert!(pixbuf != ptr::mut_null());
         g_input_stream_close(stream, ptr::mut_null(), &mut err);
@@ -59,17 +64,53 @@ pub enum GuiUpdateMessage {
     NextTrack,
     SkipTrack,
     SetPic(uint, Vec<u8>),
+    SetCurrentPic(Vec<u8>),
     SetProgress(Option<(i64, i64)>),
     Notify(String),
     StartTimers,
     PauseTimers,
 }
 
+struct LoadingImage {
+    image: *mut GtkImage,
+    // Currently only square images.
+    size: libc::c_int,
+}
+
+impl LoadingImage {
+    fn new(size: libc::c_int) -> LoadingImage {
+        LoadingImage {
+            image: unsafe{ gtk_image_new() } as *mut GtkImage,
+            size: size,
+        }
+    }
+
+    fn set_image(&mut self, pixbuf: *mut GdkPixbuf) {
+        unsafe {
+            gtk_image_set_from_pixbuf(self.image, pixbuf);
+        }
+    }
+
+    fn set_image_from_data(&mut self, data: &[u8]) {
+        unsafe {
+            let pixbuf1 = get_pixbuf_from_data(data);
+            let pixbuf2 = gdk_pixbuf_scale_simple(&*pixbuf1, self.size, self.size, GDK_INTERP_BILINEAR);
+            gdk_pixbuf_unref(pixbuf1);
+            self.set_image(pixbuf2);
+            gdk_pixbuf_unref(pixbuf2);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.set_image_from_data(ICON_DATA);
+    }
+}
+
 struct MixEntry {
     mix: api::Mix,
 
     widget: *mut GtkWidget,
-    image: *mut GtkImage,
+    image: LoadingImage,
 }
 
 impl MixEntry {
@@ -85,12 +126,9 @@ impl MixEntry {
             gtk_label_set_line_wrap_mode(label as *mut GtkLabel, PANGO_WRAP_WORD_CHAR);
             gtk_misc_set_alignment(label as *mut GtkMisc, 0f32, 0.5f32);
 
-            let pixbuf1 = get_icon_pixbuf();
-            let pixbuf2 = gdk_pixbuf_scale_simple(&*pixbuf1, 133, 133, GDK_INTERP_BILINEAR);
-            gdk_pixbuf_unref(pixbuf1);
-            let image = gtk_image_new_from_pixbuf(pixbuf2);
-            gdk_pixbuf_unref(pixbuf2);
-            gtk_box_pack_end(as_box(entry_box), image, 0, 0, 0);
+            let mut image = LoadingImage::new(133);
+            image.reset();
+            gtk_box_pack_end(as_box(entry_box), image.image as *mut GtkWidget, 0, 0, 0);
 
             let button_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
             gtk_box_pack_end(as_box(entry_box), button_box, 0, 0, 0);
@@ -106,7 +144,7 @@ impl MixEntry {
                                  mem::transmute::<&(*mut Gui, uint), gpointer>(mix_table_entry));
             });
 
-            (entry_box, image as *mut GtkImage)
+            (entry_box, image)
         };
 
         MixEntry {
@@ -116,12 +154,8 @@ impl MixEntry {
         }
     }
 
-    // &mut is not strictly required, but kind of makes sense.
-    // This is a "safe" interface after all
-    fn set_pic(&mut self, pixbuf: *mut GdkPixbuf) {
-        unsafe {
-            gtk_image_set_from_pixbuf(self.image, pixbuf);
-        }
+    fn set_pic_from_data(&mut self, data: &[u8]) {
+        self.image.set_image_from_data(data);
     }
 }
 
@@ -147,6 +181,8 @@ pub struct Gui {
 
     // And these are on the second page, the current list
     current_notebook_index: libc::c_int,
+    // None at program start, Some forever after.
+    current_image: Option<LoadingImage>,
     toggle_button: *mut GtkWidget,
     skip_button: *mut GtkWidget,
     progress_bar: *mut GtkWidget,
@@ -190,16 +226,20 @@ impl Gui {
             current_track: None,
             main_window: ptr::mut_null(),
             main_notebook: ptr::mut_null(),
+
             playlists_notebook_index: -1,
             mixes_scrolled_window: ptr::mut_null(),
             mixes_box: ptr::mut_null(),
+            status_bar: ptr::mut_null(),
+            status_bar_ci: None,
+
+            current_notebook_index: -1,
+            current_image: None,
             toggle_button: ptr::mut_null(),
             skip_button: ptr::mut_null(),
             progress_bar: ptr::mut_null(),
             info_label: ptr::mut_null(),
-            status_bar: ptr::mut_null(),
-            status_bar_ci: None,
-            current_notebook_index: -1,
+
             receiver: receiver,
             sender: sender,
             buffered_msg: None,
@@ -364,6 +404,12 @@ impl Gui {
                 if self.current_notebook_index < 0 {
                     fail!("Adding second page to notebook failed");
                 }
+
+                let mut image = LoadingImage::new(250);
+                image.reset();
+                gtk_container_add(current_box as *mut GtkContainer,
+                                  image.image as *mut GtkWidget);
+                self.current_image = Some(image);
 
                 let control_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
                 gtk_container_add(current_box as *mut GtkContainer, control_box);
@@ -558,10 +604,26 @@ impl Gui {
             self.current_mix_index = Some(i);
             let mix = self.mix_entries[i].mix.clone();
             debug!("playing mix with name `{}`", mix.name);
-            let sender = self.sender.clone();
             let pt = self.play_token.get_ref().clone();
-            let notebook = self.main_notebook as *mut GtkNotebook;
-            let index = self.current_notebook_index;
+            self.player.pause();
+
+            // Fetch cover pic
+            self.current_image.get_mut_ref().reset();
+            let sender = self.sender.clone();
+            let pic_url_str = mix.cover_urls.sq250.clone();
+            spawn(proc() {
+                let pic_data = match webinterface::get_data_from_url_str(pic_url_str.as_slice()) {
+                    Ok(pd) => pd,
+                    Err(io_err) => {
+                        sender.send(Notify(format!("Could not get picture: `{}`", io_err)));
+                        return;
+                    }
+                };
+                sender.send(SetCurrentPic(pic_data));
+            });
+
+            // Actually play
+            let sender = self.sender.clone();
             spawn(proc() {
                 let play_state_json = match webinterface::get_play_state(&pt, &mix) {
                     Ok(psj) => psj,
@@ -574,13 +636,15 @@ impl Gui {
                 match play_state.contents {
                     Some(ps) => {
                         sender.send(PlayTrack(ps.track));
-                        unsafe {
-                            gtk_notebook_set_current_page(notebook, index);
-                        }
                     }
                     None => sender.send(Notify("Could not start playing mix".to_string()))
                 }
             });
+
+            unsafe {
+                gtk_notebook_set_current_page(self.main_notebook as *mut GtkNotebook,
+                                              self.current_notebook_index);
+            }
         }
     }
 
@@ -672,28 +736,16 @@ impl Gui {
     }
 
     fn set_pic(&mut self, i: uint, pic_data: Vec<u8>) {
-        let pixbuf = unsafe {
-            let mut err = ptr::mut_null();
-
-            let stream = g_memory_input_stream_new_from_data(
-                pic_data.as_ptr() as *const libc::c_void,
-                pic_data.len() as i64, None);
-            let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
-
-            g_input_stream_close(stream, ptr::mut_null(), &mut err);
-            pixbuf
-        };
-
         if i >= self.mix_entries.len() {
             warn!("set_pic: index {} is out of range, only {} mix_entries",
                   i, self.mix_entries.len());
         } else {
-            self.mix_entries.get_mut(i).set_pic(pixbuf);
+            self.mix_entries.get_mut(i).set_pic_from_data(pic_data.as_slice());
         }
+    }
 
-        unsafe {
-            gdk_pixbuf_unref(pixbuf);
-        }
+    fn set_current_pic(&mut self, pic_data: Vec<u8>) {
+        self.current_image.get_mut_ref().set_image_from_data(pic_data.as_slice());
     }
 
     fn start_timers(&mut self) {
@@ -774,6 +826,7 @@ impl Gui {
             NextTrack => self.next_track(),
             SkipTrack => self.skip_track(),
             SetPic(i, d) => self.set_pic(i, d),
+            SetCurrentPic(d) => self.set_current_pic(d),
             SetProgress(p) => self.set_progress(p),
             Notify(m) => self.notify(m.as_slice()),
             StartTimers => self.start_timers(),
