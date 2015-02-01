@@ -1,7 +1,7 @@
-use std::comm;
 use std::mem;
 use std::ptr;
-use std::string::raw::from_buf;
+use std::str;
+use std::sync::mpsc;
 
 use log;
 
@@ -15,29 +15,29 @@ use gui;
 static PLAYBIN_ELEMENT_NAME: &'static str = "rusttracks-playbin";
 
 struct ReportCallback {
-    sender: comm::Sender<gui::GuiUpdateMessage>,
+    sender: mpsc::Sender<gui::GuiUpdateMessage>,
 }
 
 impl ReportCallback {
-    fn new(sender: comm::Sender<gui::GuiUpdateMessage>) -> ReportCallback {
+    fn new(sender: mpsc::Sender<gui::GuiUpdateMessage>) -> ReportCallback {
         ReportCallback { sender: sender }
     }
 }
 
 impl timerfd::TimerGSourceCallback for ReportCallback {
     fn callback(&mut self, _timer: &mut timerfd::Timer) -> bool {
-        self.sender.send(gui::ReportCurrentTrack);
+        self.sender.send(gui::GuiUpdateMessage::ReportCurrentTrack);
         false
     }
 }
 
 struct ProgressCallback {
-    sender: comm::Sender<gui::GuiUpdateMessage>,
+    sender: mpsc::Sender<gui::GuiUpdateMessage>,
     playbin: *mut GstElement,
 }
 
 impl ProgressCallback {
-    fn new(sender: comm::Sender<gui::GuiUpdateMessage>, playbin: *mut GstElement) -> ProgressCallback {
+    fn new(sender: mpsc::Sender<gui::GuiUpdateMessage>, playbin: *mut GstElement) -> ProgressCallback {
         ProgressCallback { sender: sender, playbin: playbin }
     }
 }
@@ -58,16 +58,16 @@ impl timerfd::TimerGSourceCallback for ProgressCallback {
         };
 
         if success_duration != 0 && success_position != 0 {
-            self.sender.send(gui::SetProgress(Some((current_position, current_duration))));
+            self.sender.send(gui::GuiUpdateMessage::SetProgress(Some((current_position, current_duration))));
         } else {
-            self.sender.send(gui::SetProgress(None));
+            self.sender.send(gui::GuiUpdateMessage::SetProgress(None));
         }
 
         true
     }
 }
 
-#[deriving(PartialEq,Eq)]
+#[derive(PartialEq,Eq)]
 enum PlayState {
     Uninit,
     NoUri,
@@ -78,7 +78,7 @@ enum PlayState {
 
 pub struct Player {
     state: PlayState,
-    gui_sender: Option<Box<comm::Sender<gui::GuiUpdateMessage>>>,
+    gui_sender: Option<Box<mpsc::Sender<gui::GuiUpdateMessage>>>,
 
     playbin: *mut GstElement,
 
@@ -89,19 +89,19 @@ pub struct Player {
 impl Player {
     pub fn new() -> Player {
         Player {
-            state: Uninit,
+            state: PlayState::Uninit,
             gui_sender: None,
-            playbin: ptr::mut_null(),
+            playbin: ptr::null_mut(),
             report_timer: None,
             progress_timer: None,
         }
     }
 
-    pub fn init(&mut self, args: Vec<String>, gui_sender: comm::Sender<gui::GuiUpdateMessage>) -> Vec<String> {
+    pub fn init(&mut self, args: Vec<String>, gui_sender: mpsc::Sender<gui::GuiUpdateMessage>) -> Vec<String> {
         let args2 = unsafe {
             gst_init_with_args(args)
         };
-        self.gui_sender = Some(box gui_sender);
+        self.gui_sender = Some(Box::new(gui_sender));
         unsafe {
             "playbin".with_c_str(|c_str| {
                 PLAYBIN_ELEMENT_NAME.with_c_str(|rtpb| {
@@ -109,15 +109,15 @@ impl Player {
                 });
             });
             if self.playbin.is_null() {
-                fail!("failed to create playbin");
+                panic!("failed to create playbin");
             }
 
             let bus = gst_pipeline_get_bus(self.playbin as *mut GstPipeline);
             gst_bus_add_watch(bus, Some(bus_callback),
-                              mem::transmute::<&comm::Sender<gui::GuiUpdateMessage>, gpointer>(
+                              mem::transmute::<&mpsc::Sender<gui::GuiUpdateMessage>, gpointer>(
                                   &**self.gui_sender.get_ref()));
         }
-        self.state = NoUri;
+        self.state = PlayState::NoUri;
         args2
     }
 
@@ -131,14 +131,14 @@ impl Player {
                 });
             });
         }
-        self.state = WaitToPlay;
+        self.state = PlayState::WaitToPlay;
     }
 
     pub fn play(&mut self) {
         match self.state {
-            Uninit => fail!("player is not initialized"),
-            NoUri => fail!("no uri set"),
-            Play => {
+            PlayState::Uninit => panic!("player is not initialized"),
+            PlayState::NoUri => panic!("no uri set"),
+            PlayState::Play => {
                 info!("already playing");
                 return;
             }
@@ -147,27 +147,27 @@ impl Player {
         unsafe {
             gst_element_set_state(self.playbin, GST_STATE_PLAYING);
         }
-        self.state = Play;
+        self.state = PlayState::Play;
     }
 
     pub fn pause(&mut self) {
         match self.state {
-            Uninit => fail!("player is not initialized"),
+            PlayState::Uninit => panic!("player is not initialized"),
             // NoUri -> we're not playing anyway.
             // Pause -> noop.
-            NoUri | Pause => return,
+            PlayState::NoUri | PlayState::Pause => return,
             _ => ()
         }
         unsafe {
             gst_element_set_state(self.playbin, GST_STATE_PAUSED);
         }
-        self.state = Pause;
+        self.state = PlayState::Pause;
     }
 
     pub fn stop(&mut self) {
         match self.state {
-            Uninit => fail!("player is not initialized"),
-            NoUri => {
+            PlayState::Uninit => panic!("player is not initialized"),
+            PlayState::NoUri => {
                 warn!("already stopped");
                 return;
             }
@@ -177,34 +177,34 @@ impl Player {
         unsafe {
             gst_element_set_state(self.playbin, GST_STATE_READY);
         }
-        self.state = NoUri;
+        self.state = PlayState::NoUri;
     }
 
     pub fn toggle(&mut self) {
         match self.state {
-            Uninit => fail!("player is not initialized"),
+            PlayState::Uninit => panic!("player is not initialized"),
             // NoUri -> don't do anything
-            NoUri => warn!("Uri is not set"),
-            Play | WaitToPlay => self.pause(),
-            Pause => self.play()
+            PlayState::NoUri => warn!("Uri is not set"),
+            PlayState::Play | PlayState::WaitToPlay => self.pause(),
+            PlayState::Pause => self.play()
         }
     }
 
     pub fn set_buffering(&mut self, is_buffering: bool) {
         match self.state {
-            Uninit => fail!("player is not initialized"),
-            NoUri => fail!("Uri is not set"),
-            Play if is_buffering => {
+            PlayState::Uninit => panic!("player is not initialized"),
+            PlayState::NoUri => panic!("Uri is not set"),
+            PlayState::Play if is_buffering => {
                 unsafe {
                     gst_element_set_state(self.playbin, GST_STATE_PAUSED);
                 }
-                self.state = WaitToPlay;
+                self.state = PlayState::WaitToPlay;
             }
-            WaitToPlay if !is_buffering => {
+            PlayState::WaitToPlay if !is_buffering => {
                 unsafe {
                     gst_element_set_state(self.playbin, GST_STATE_PLAYING);
                 }
-                self.state = Play;
+                self.state = PlayState::Play;
             }
             _ => {
                 // Nothing to do
@@ -213,14 +213,14 @@ impl Player {
     }
 
     pub fn is_playing(&self) -> bool {
-        self.state == Play || self.state == WaitToPlay
+        self.state == PlayState::Play || self.state == PlayState::WaitToPlay
     }
 
-    pub fn start_timers(&mut self, sender: comm::Sender<gui::GuiUpdateMessage>) {
+    pub fn start_timers(&mut self, sender: mpsc::Sender<gui::GuiUpdateMessage>) {
         let context = unsafe { g_main_context_default() };
 
         if self.report_timer.is_none() {
-            let rc = box ReportCallback::new(sender.clone());
+            let rc = Box::new(ReportCallback::new(sender.clone()));
             let mut rt = timerfd::TimerGSource::new(rc as Box<timerfd::TimerGSourceCallback+Send>);
             rt.attach(context);
             rt.mut_timer().set_oneshot(30 * 1000);
@@ -229,7 +229,7 @@ impl Player {
         self.report_timer.get_mut_ref().mut_timer().start();
 
         if self.progress_timer.is_none() {
-            let pc = box ProgressCallback::new(sender, self.playbin);
+            let pc = Box::new(ProgressCallback::new(sender, self.playbin));
             let mut pt = timerfd::TimerGSource::new(pc as Box<timerfd::TimerGSourceCallback+Send>);
             pt.attach(context);
             pt.mut_timer().set_interval(1, 1 * 1000);
@@ -257,7 +257,7 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
-        if self.state != Uninit {
+        if self.state != PlayState::Uninit {
             unsafe {
                 if !self.playbin.is_null() {
                     gst_element_set_state(self.playbin, GST_STATE_NULL);
@@ -271,7 +271,7 @@ impl Drop for Player {
 
 extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpointer) -> gboolean {
     unsafe {
-    let gui_sender = &*(data as *const comm::Sender<gui::GuiUpdateMessage>);
+    let gui_sender = &*(data as *const mpsc::Sender<gui::GuiUpdateMessage>);
 
     let name = {
         let gst_obj = (*msg).src;
@@ -282,7 +282,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             if name_ptr.is_null() {
                 "null-name".to_string()
             } else {
-                let name = from_buf(name_ptr as *const u8);
+                let name = str::from_utf8(name_ptr as *const u8).unwrap().to_string();
                 g_free(name_ptr as gpointer);
                 name
             }
@@ -291,31 +291,35 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
 
     match (*msg)._type {
         GST_MESSAGE_ERROR => {
-            let mut err = ptr::mut_null();
-            let mut dbg_info = ptr::mut_null();
+            let mut err = ptr::null_mut();
+            let mut dbg_info = ptr::null_mut();
 
             gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-            let err_msg = from_buf((*err).message as *const u8);
+
+            let err_msg = str::from_utf8((*err).message as *const u8).unwrap();
+            let info = str::from_utf8(dbg_info as *const u8).unwrap();
 
             error!("ERROR from element {}: {}", name, err_msg);
-            error!("Debugging info: {}", from_buf(dbg_info as *const u8));
+            error!("Debugging info: {}", info);
 
-            gui_sender.send(gui::Notify(format!("Playback error: `{}`", err_msg)));
+            gui_sender.send(gui::GuiUpdateMessage::Notify(format!("Playback error: `{}`", err_msg)));
 
             g_error_free(err);
             g_free(dbg_info as gpointer);
         }
         GST_MESSAGE_WARNING => {
             if log_enabled!(log::WARN) {
-                let mut err = ptr::mut_null();
-                let mut dbg_info = ptr::mut_null();
+                let mut err = ptr::null_mut();
+                let mut dbg_info = ptr::null_mut();
 
                 gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-                warn!("WARNING from element {}: {}", name,
-                      from_buf((*err).message as *const u8));
-                warn!("Debugging info: {}", from_buf(dbg_info as *const u8));
+                let err_msg = str::from_utf8((*err).message as *const u8).unwrap();
+                let info = str::from_utf8(dbg_info as *const u8).unwrap();
+
+                warn!("WARNING from element {}: {}", name, err_msg);
+                warn!("Debugging info: {}", info);
 
                 g_error_free(err);
                 g_free(dbg_info as gpointer);
@@ -323,14 +327,16 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         }
         GST_MESSAGE_INFO => {
             if log_enabled!(log::INFO) {
-                let mut err = ptr::mut_null();
-                let mut dbg_info = ptr::mut_null();
+                let mut err = ptr::null_mut();
+                let mut dbg_info = ptr::null_mut();
 
                 gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-                info!("INFO from element {}: {}", name,
-                      from_buf((*err).message as *const u8));
-                info!("Debugging info: {}", from_buf(dbg_info as *const u8));
+                let err_msg = str::from_utf8((*err).message as *const u8).unwrap();
+                let info = str::from_utf8(dbg_info as *const u8).unwrap();
+
+                info!("INFO from element {}: {}", name, err_msg);
+                info!("Debugging info: {}", info);
 
                 g_error_free(err);
                 g_free(dbg_info as gpointer);
@@ -338,23 +344,24 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         }
         GST_MESSAGE_EOS => {
             debug!("EOS from element {}", name);
-            gui_sender.send(gui::NextTrack);
+            gui_sender.send(gui::GuiUpdateMessage::NextTrack);
         }
         GST_MESSAGE_STATE_CHANGED => {
             if name.as_slice() == PLAYBIN_ELEMENT_NAME {
                 let mut new_state = 0;
-                gst_message_parse_state_changed(msg, ptr::mut_null(),
-                    &mut new_state, ptr::mut_null());
+                gst_message_parse_state_changed(msg, ptr::null_mut(),
+                    &mut new_state, ptr::null_mut());
                 if log_enabled!(log::DEBUG) {
                     let new_state_name = gst_element_state_get_name(new_state);
-                    debug!("new playbin state: {}", from_buf(new_state_name as *const u8));
+                    let name = str::from_utf8(new_state_name as *const u8).unwrap();
+                    debug!("new playbin state: {}", name);
                 }
                 match new_state {
                     GST_STATE_PLAYING => {
-                        gui_sender.send(gui::StartTimers);
+                        gui_sender.send(gui::GuiUpdateMessage::StartTimers);
                     }
                     GST_STATE_PAUSED => {
-                        gui_sender.send(gui::PauseTimers);
+                        gui_sender.send(gui::GuiUpdateMessage::PauseTimers);
                     }
                     _ => {
                         // Do nothing, the timers will be overwritten anyways
@@ -366,12 +373,12 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             let mut percent = 0;
             gst_message_parse_buffering(msg, &mut percent);
             info!("BUFFERING from element `{}`, {}%", name, percent);
-            gui_sender.send(gui::SetBuffering(percent < 100));
+            gui_sender.send(gui::GuiUpdateMessage::SetBuffering(percent < 100));
         }
         _ => {
             if log_enabled!(log::DEBUG) {
                 let msg_type_cstr = gst_message_type_get_name((*msg)._type);
-                let msg_type_name = from_buf(msg_type_cstr as *const u8);
+                let msg_type_name = str::from_utf8(msg_type_cstr as *const u8).unwrap();
                 debug!("message of type `{}` from element `{}`", msg_type_name, name);
             }
         }

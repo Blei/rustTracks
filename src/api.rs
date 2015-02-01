@@ -1,7 +1,7 @@
 use serialize::Decodable;
 use serialize::json;
 
-fn maybe_extract_from_json_object<T: Decodable<json::Decoder, json::DecoderError>>(
+fn maybe_extract_from_json_object<T: Decodable>(
         obj: &json::Object, id: &String) -> Option<T> {
     let found = match obj.find(id) {
         Some(s) => s.clone(),
@@ -11,27 +11,27 @@ fn maybe_extract_from_json_object<T: Decodable<json::Decoder, json::DecoderError
     Decodable::decode(&mut decoder).ok()
 }
 
-fn extract_from_json_object<T: Decodable<json::Decoder, json::DecoderError>>(
+fn extract_from_json_object<T: Decodable>(
     obj: &json::Object, id: &String) -> T {
 
     maybe_extract_from_json_object(obj, id).unwrap_or_else(|| {
-        fail!("Didn't find id `{}` or an incorrect type in `{}`",
-              *id, json::Object(obj.clone()).to_string());
+        panic!("Didn't find id `{}` or an incorrect type in `{}`",
+               *id, json::Json::Object(obj.clone()).to_string());
     })
 }
 
 fn expect_json_object<'a>(json: &'a json::Json) -> &'a json::Object {
     match *json {
-        json::Object(ref obj) => obj,
-        _ => fail!("Expected an object, got {:?}", json),
+        json::Json::Object(ref obj) => obj,
+        _ => panic!("Expected an object, got {:?}", json),
     }
 }
 
-pub static API_VERSION: int = 3;
+pub static API_VERSION: i32 = 3;
 
 pub static API_KEY: &'static str = "def2ba77d002afeec898674ede24fe10828ad8a5";
 
-#[deriving(Clone)]
+#[derive(Clone)]
 pub struct PlayToken {
     pub s: String,
 }
@@ -41,7 +41,7 @@ pub struct Response<T> {
     pub errors: Option<String>,
     pub notices: Option<String>,
     pub logged_in: bool,
-    pub api_version: uint,
+    pub api_version: u32,
     pub contents: Option<T>,
 }
 
@@ -63,7 +63,7 @@ impl <T> Response<T> {
     }
 }
 
-#[deriving(Decodable, Clone)]
+#[derive(Decodable, Clone)]
 pub struct CoverUrls {
     pub sq56: String,
     pub sq100: String,
@@ -83,26 +83,26 @@ impl CoverUrls {
     }
 }
 
-#[deriving(Decodable, Clone)]
+#[derive(Decodable, Clone)]
 pub struct Mix {
-    pub id: uint,
+    pub id: u32,
     pub path: String,
     pub web_path: String,
     pub name: String,
     pub description: String,
-    pub plays_count: uint,
-    pub likes_count: uint,
+    pub plays_count: u32,
+    pub likes_count: u32,
     pub certification: Option<String>,
     // TODO parse this...
     pub tag_list_cache: String,
-    pub duration: uint,
-    pub tracks_count: uint,
+    pub duration: u32,
+    pub tracks_count: u32,
     pub nsfw: bool,
     pub liked_by_current_user: bool,
     pub cover_urls: CoverUrls,
     // TODO parse this...
     pub first_published_at: String,
-    pub user_id: uint,
+    pub user_id: u32,
 }
 
 impl Mix {
@@ -129,7 +129,7 @@ impl Mix {
     }
 }
 
-#[deriving(Decodable)]
+#[derive(Decodable)]
 pub struct MixSet {
     pub mixes: Vec<Mix>,
     pub smart_id: String,
@@ -143,8 +143,8 @@ impl MixSet {
     pub fn from_json(json: &json::Json) -> MixSet {
         let obj = expect_json_object(json);
         let mixes_list = match obj.find(&"mixes".to_string()) {
-            Some(&json::List(ref list)) => list,
-            _ => fail!("expected mixes list in mix set, got {:?}", obj)
+            Some(&json::Json::Array(ref list)) => list,
+            _ => panic!("expected mixes array in mix set, got {:?}", obj)
         };
         let mixes = mixes_list.iter().map(|json| { Mix::from_json(json) }).collect();
         MixSet {
@@ -158,20 +158,20 @@ impl MixSet {
     }
 }
 
-#[deriving(Clone, Decodable)]
+#[derive(Clone, Decodable)]
 pub struct Track {
-    pub id: uint,
+    pub id: u32,
     pub name: String,
     pub performer: String,
     pub release_name: Option<String>,
-    pub year: Option<int>,
+    pub year: Option<u32>,
     pub track_file_stream_url: String,
     pub buy_link: String,
     pub faved_by_current_user: bool,
     pub url: String,
 }
 
-#[deriving(Decodable)]
+#[derive(Decodable)]
 pub struct PlayState {
     pub at_beginning: bool,
     pub at_last_track: bool,

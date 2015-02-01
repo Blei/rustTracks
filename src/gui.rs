@@ -1,10 +1,11 @@
 use libc;
 
 use std::iter;
-use std::mem;
 use std::ptr;
-use std::comm;
-use strraw = std::string::raw;
+use std::mem;
+use std::str;
+use std::sync::mpsc;
+use std::thread;
 
 use gtk::ffi::*;
 use gtk::*;
@@ -17,7 +18,7 @@ fn as_box<T>(in_ptr: *mut T) -> *mut GtkBox {
     in_ptr as *mut GtkBox
 }
 
-static ICON_DATA: &'static [u8] = include_bin!("8tracks-icon.jpg");
+static ICON_DATA: &'static [u8] = include_bytes!("8tracks-icon.jpg");
 
 fn get_icon_pixbuf() -> *mut GdkPixbuf {
     get_pixbuf_from_data(ICON_DATA)
@@ -25,14 +26,14 @@ fn get_icon_pixbuf() -> *mut GdkPixbuf {
 
 fn get_pixbuf_from_data(pic_data: &[u8]) -> *mut GdkPixbuf {
     unsafe {
-        let mut err = ptr::mut_null();
+        let mut err = ptr::null_mut();
 
         let stream = g_memory_input_stream_new_from_data(
             pic_data.as_ptr() as *const libc::c_void,
             pic_data.len() as i64, None);
-        let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::mut_null(), &mut err);
-        assert!(pixbuf != ptr::mut_null());
-        g_input_stream_close(stream, ptr::mut_null(), &mut err);
+        let pixbuf = gdk_pixbuf_new_from_stream(stream, ptr::null_mut(), &mut err);
+        assert!(pixbuf != ptr::null_mut());
+        g_input_stream_close(stream, ptr::null_mut(), &mut err);
         pixbuf
     }
 }
@@ -56,14 +57,14 @@ pub enum GuiUpdateMessage {
     SetPlayToken(api::PlayToken),
     GetMixes(String),
     UpdateMixes(Vec<api::Mix>),
-    PlayMix(uint),
+    PlayMix(usize),
     PlayTrack(api::Track),
     ReportCurrentTrack,
     TogglePlaying,
     SetBuffering(bool),
     NextTrack,
     SkipTrack,
-    SetPic(uint, Vec<u8>),
+    SetPic(usize, Vec<u8>),
     SetCurrentPic(Vec<u8>),
     SetProgress(Option<(i64, i64)>),
     Notify(String),
@@ -114,7 +115,7 @@ struct MixEntry {
 }
 
 impl MixEntry {
-    fn new(mix: api::Mix, mix_table_entry: &(*mut Gui, uint)) -> MixEntry {
+    fn new(mix: api::Mix, mix_table_entry: &(*mut Gui, usize)) -> MixEntry {
         let (widget, image) = unsafe {
             let entry_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
 
@@ -141,7 +142,7 @@ impl MixEntry {
                 g_signal_connect(button as gpointer,
                                  c,
                                  Some(mem::transmute(play_button_clicked)),
-                                 mem::transmute::<&(*mut Gui, uint), gpointer>(mix_table_entry));
+                                 mem::transmute::<&(*mut Gui, usize), gpointer>(mix_table_entry));
             });
 
             (entry_box, image)
@@ -166,7 +167,7 @@ pub struct Gui {
     mix_entries: Vec<MixEntry>,
     play_token: Option<api::PlayToken>,
 
-    current_mix_index: Option<uint>,
+    current_mix_index: Option<usize>,
     current_track: Option<api::Track>,
 
     main_window: *mut GtkWidget,
@@ -188,8 +189,8 @@ pub struct Gui {
     progress_bar: *mut GtkWidget,
     info_label: *mut GtkWidget,
 
-    receiver: comm::Receiver<GuiUpdateMessage>,
-    sender: comm::Sender<GuiUpdateMessage>,
+    receiver: mpsc::Receiver<GuiUpdateMessage>,
+    sender: mpsc::Sender<GuiUpdateMessage>,
     buffered_msg: Option<GuiUpdateMessage>,
 
     gui_g_source: *mut GuiGSource,
@@ -198,25 +199,25 @@ pub struct Gui {
     player: player::Player,
 
     // this is such a hack...
-    mix_index_table: Vec<(*mut Gui, uint)>,
+    mix_index_table: Vec<(*mut Gui, usize)>,
 }
 
 #[unsafe_destructor]
 impl Drop for Gui {
     fn drop(&mut self) {
         self.quit();
-        if self.gui_g_source != ptr::mut_null() {
+        if self.gui_g_source != ptr::null_mut() {
             unsafe {
                 g_source_unref(self.gui_g_source as *mut GSource);
             }
-            self.gui_g_source = ptr::mut_null();
+            self.gui_g_source = ptr::null_mut();
         }
     }
 }
 
 impl Gui {
     pub fn new() -> Gui {
-        let (sender, receiver) = comm::channel();
+        let (sender, receiver) = mpsc::channel();
         Gui {
             initialized: false,
             running: false,
@@ -224,26 +225,26 @@ impl Gui {
             play_token: None,
             current_mix_index: None,
             current_track: None,
-            main_window: ptr::mut_null(),
-            main_notebook: ptr::mut_null(),
+            main_window: ptr::null_mut(),
+            main_notebook: ptr::null_mut(),
 
             playlists_notebook_index: -1,
-            mixes_scrolled_window: ptr::mut_null(),
-            mixes_box: ptr::mut_null(),
-            status_bar: ptr::mut_null(),
+            mixes_scrolled_window: ptr::null_mut(),
+            mixes_box: ptr::null_mut(),
+            status_bar: ptr::null_mut(),
             status_bar_ci: None,
 
             current_notebook_index: -1,
             current_image: None,
-            toggle_button: ptr::mut_null(),
-            skip_button: ptr::mut_null(),
-            progress_bar: ptr::mut_null(),
-            info_label: ptr::mut_null(),
+            toggle_button: ptr::null_mut(),
+            skip_button: ptr::null_mut(),
+            progress_bar: ptr::null_mut(),
+            info_label: ptr::null_mut(),
 
             receiver: receiver,
             sender: sender,
             buffered_msg: None,
-            gui_g_source: ptr::mut_null(),
+            gui_g_source: ptr::null_mut(),
             g_source_funcs: Struct__GSourceFuncs {
                 prepare: Some(prepare_gui_g_source),
                 check: Some(check_gui_g_source),
@@ -350,11 +351,11 @@ impl Gui {
                     main_box,
                     playlist_label);
                 if self.playlists_notebook_index < 0 {
-                    fail!("Adding first page to notebook failed");
+                    panic!("Adding first page to notebook failed");
                 }
 
-                self.mixes_scrolled_window = gtk_scrolled_window_new(ptr::mut_null(),
-                                                                   ptr::mut_null());
+                self.mixes_scrolled_window = gtk_scrolled_window_new(ptr::null_mut(),
+                                                                   ptr::null_mut());
                 gtk_scrolled_window_set_policy(self.mixes_scrolled_window as *mut GtkScrolledWindow,
                     GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
                 gtk_box_pack_start(as_box(main_box), self.mixes_scrolled_window, 1, 1, 0);
@@ -376,7 +377,7 @@ impl Gui {
                                      ptr::null(), cstr)
                 );
                 gtk_combo_box_set_active(smart_id_ordering_combo as *mut GtkComboBox,
-                                         Popular as libc::c_int);
+                                         MixesOrdering::Popular as libc::c_int);
 
                 let smart_id_entry = gtk_entry_new();
                 gtk_box_pack_start(as_box(smart_id_box), smart_id_entry, 1, 1, 0);
@@ -402,7 +403,7 @@ impl Gui {
                     current_box,
                     current_label);
                 if self.current_notebook_index < 0 {
-                    fail!("Adding second page to notebook failed");
+                    panic!("Adding second page to notebook failed");
                 }
 
                 let mut image = LoadingImage::new(250);
@@ -478,11 +479,11 @@ impl Gui {
         if self.initialized {
             self.player.stop();
             {
-                if self.main_window != ptr::mut_null() {
+                if self.main_window != ptr::null_mut() {
                     unsafe {
                         gtk_widget_destroy(self.main_window);
                     }
-                    self.main_window = ptr::mut_null();
+                    self.main_window = ptr::null_mut();
                 }
                 unsafe {
                     g_source_destroy(self.gui_g_source as *mut GSource);
@@ -520,18 +521,18 @@ impl Gui {
 
         debug!("fetching play token");
         let sender = self.sender.clone();
-        spawn(proc() {
+        thread::Thread::spawn(|| {
             let pt_json = match webinterface::get_play_token() {
                 Ok(ptj) => ptj,
                 Err(io_err) => {
-                    sender.send(Notify(format!("Playtoken could not be obtained: `{}`", io_err)));
+                    sender.send(GuiUpdateMessage::Notify(format!("Playtoken could not be obtained: `{}`", io_err)));
                     return;
                 }
             };
             let pt = api::parse_play_token_response(&pt_json);
             match pt.contents {
-                Some(pt) => sender.send(SetPlayToken(pt)),
-                None => sender.send(Notify("Playtoken could not be obtained".to_string()))
+                Some(pt) => sender.send(GuiUpdateMessage::SetPlayToken(pt)),
+                None => sender.send(GuiUpdateMessage::Notify("Playtoken could not be obtained".to_string()))
             }
         });
     }
@@ -542,9 +543,7 @@ impl Gui {
     }
 
     fn set_mixes(&mut self, mixes: Vec<api::Mix>) {
-        self.mix_index_table = Vec::from_fn(mixes.len(), |i| {
-            (self as *mut Gui, i)
-        });
+        self.mix_index_table = (0..mixes.len()).map(|i| (self as *mut Gui, i)).collect();
         self.mix_entries.clear();
         debug!("setting mixes, length {}", mixes.len());
         unsafe {
@@ -558,15 +557,15 @@ impl Gui {
                 // Fetch cover pic
                 let sender = self.sender.clone();
                 let pic_url_str = mixes[i].cover_urls.sq133.clone();
-                spawn(proc() {
+                thread::Thread::spawn(|| {
                     let pic_data = match webinterface::get_data_from_url_str(pic_url_str.as_slice()) {
                         Ok(pd) => pd,
                         Err(io_err) => {
-                            sender.send(Notify(format!("Could not get picture: `{}`", io_err)));
+                            sender.send(GuiUpdateMessage::Notify(format!("Could not get picture: `{}`", io_err)));
                             return;
                         }
                     };
-                    sender.send(SetPic(i, pic_data));
+                    sender.send(GuiUpdateMessage::SetPic(i, pic_data));
                 });
             }
             gtk_widget_show_all(self.mixes_box);
@@ -580,23 +579,23 @@ impl Gui {
     fn get_mixes(&self, smart_id: String) {
         debug!("getting mixes for smart id '{}'", smart_id);
         let sender = self.get_sender().clone();
-        spawn(proc() {
+        thread::Thread::spawn(|| {
             let mix_set_json = match webinterface::get_mix_set(smart_id.as_slice()) {
                 Ok(msj) => msj,
                 Err(io_err) => {
-                    sender.send(Notify(format!("Could not get mix list: `{}`", io_err)));
+                    sender.send(GuiUpdateMessage::Notify(format!("Could not get mix list: `{}`", io_err)));
                     return;
                 }
             };
             let mix_set = api::parse_mix_set_response(&mix_set_json);
             match mix_set.contents {
-                Some(ms) => sender.send(UpdateMixes(ms.mixes)),
-                None => sender.send(Notify("Mix list could not be obtained".to_string()))
+                Some(ms) => sender.send(GuiUpdateMessage::UpdateMixes(ms.mixes)),
+                None => sender.send(GuiUpdateMessage::Notify("Mix list could not be obtained".to_string()))
             }
         });
     }
 
-    fn play_mix(&mut self, i: uint) {
+    fn play_mix(&mut self, i: usize) {
         debug!("playing mix with index {}", i);
         if i >= self.mix_entries.len() {
             warn!("index is out of bounds, ignoring message");
@@ -611,33 +610,33 @@ impl Gui {
             self.current_image.get_mut_ref().reset();
             let sender = self.sender.clone();
             let pic_url_str = mix.cover_urls.sq250.clone();
-            spawn(proc() {
+            thread::Thread::spawn(|| {
                 let pic_data = match webinterface::get_data_from_url_str(pic_url_str.as_slice()) {
                     Ok(pd) => pd,
                     Err(io_err) => {
-                        sender.send(Notify(format!("Could not get picture: `{}`", io_err)));
+                        sender.send(GuiUpdateMessage::Notify(format!("Could not get picture: `{}`", io_err)));
                         return;
                     }
                 };
-                sender.send(SetCurrentPic(pic_data));
+                sender.send(GuiUpdateMessage::SetCurrentPic(pic_data));
             });
 
             // Actually play
             let sender = self.sender.clone();
-            spawn(proc() {
+            thread::Thread::spawn(|| {
                 let play_state_json = match webinterface::get_play_state(&pt, &mix) {
                     Ok(psj) => psj,
                     Err(io_err) => {
-                        sender.send(Notify(format!("Could not start playing mix: `{}`", io_err)));
+                        sender.send(GuiUpdateMessage::Notify(format!("Could not start playing mix: `{}`", io_err)));
                         return;
                     }
                 };
                 let play_state = api::parse_play_state_response(&play_state_json);
                 match play_state.contents {
                     Some(ps) => {
-                        sender.send(PlayTrack(ps.track));
+                        sender.send(GuiUpdateMessage::PlayTrack(ps.track));
                     }
-                    None => sender.send(Notify("Could not start playing mix".to_string()))
+                    None => sender.send(GuiUpdateMessage::Notify("Could not start playing mix".to_string()))
                 }
             });
 
@@ -667,7 +666,7 @@ impl Gui {
                 self.mix_entries[*self.current_mix_index.get_ref()].mix.id,
                 self.current_track.get_ref().id,
             );
-        spawn(proc() {
+        thread::Thread::spawn(|| {
             webinterface::report_track(&pt, ti, mi);
         });
     }
@@ -694,18 +693,18 @@ impl Gui {
         debug!("getting next track of mix with name `{}`", mix.name);
         let sender = self.sender.clone();
         let pt = self.play_token.get_ref().clone();
-        spawn(proc() {
+        thread::Thread::spawn(|| {
             let next_track_json = match webinterface::get_next_track(&pt, &mix) {
                 Ok(ntj) => ntj,
                 Err(io_err) => {
-                    sender.send(Notify(format!("Could not get next track: `{}`", io_err)));
+                    sender.send(GuiUpdateMessage::Notify(format!("Could not get next track: `{}`", io_err)));
                     return;
                 }
             };
             let play_state = api::parse_play_state_response(&next_track_json);
             match play_state.contents {
-                Some(ps) => sender.send(PlayTrack(ps.track)),
-                None => sender.send(Notify("Next track could not be obtained".to_string()))
+                Some(ps) => sender.send(GuiUpdateMessage::PlayTrack(ps.track)),
+                None => sender.send(GuiUpdateMessage::Notify("Next track could not be obtained".to_string()))
             }
         });
     }
@@ -719,23 +718,23 @@ impl Gui {
         debug!("skipping track of mix with name `{}`", mix.name);
         let sender = self.sender.clone();
         let pt = self.play_token.get_ref().clone();
-        spawn(proc() {
+        thread::Thread::spawn(|| {
             let skip_track_json = match webinterface::get_skip_track(&pt, &mix) {
                 Ok(stj) => stj,
                 Err(io_err) => {
-                    sender.send(Notify(format!("Could not skip track: `{}`", io_err)));
+                    sender.send(GuiUpdateMessage::Notify(format!("Could not skip track: `{}`", io_err)));
                     return;
                 }
             };
             let play_state = api::parse_play_state_response(&skip_track_json);
             match play_state.contents {
-                Some(ps) => sender.send(PlayTrack(ps.track)),
-                None => sender.send(Notify("Could not skip track".to_string()))
+                Some(ps) => sender.send(GuiUpdateMessage::PlayTrack(ps.track)),
+                None => sender.send(GuiUpdateMessage::Notify("Could not skip track".to_string()))
             }
         });
     }
 
-    fn set_pic(&mut self, i: uint, pic_data: Vec<u8>) {
+    fn set_pic(&mut self, i: usize, pic_data: Vec<u8>) {
         if i >= self.mix_entries.len() {
             warn!("set_pic: index {} is out of range, only {} mix_entries",
                   i, self.mix_entries.len());
@@ -765,7 +764,7 @@ impl Gui {
                 let fraction = (pos as f64) / ((dur - 1) as f64);
                 let pos_sec = pos / 1000000000;
                 let dur_sec = dur / 1000000000;
-                let text = format!("{}:{:02d} / {}:{:02d}",
+                let text = format!("{}:{:02} / {}:{:02}",
                                    pos_sec / 60, pos_sec % 60,
                                    dur_sec / 60, dur_sec % 60);
                 unsafe {
@@ -796,11 +795,11 @@ impl Gui {
                 self.buffered_msg = Some(msg);
                 return true;
             }
-            Err(comm::Empty) => {
+            Err(mpsc::TryRecvError::Empty) => {
                 return false;
             }
-            Err(comm::Disconnected) => {
-                fail!("wut? noone allowed you to disconnect!")
+            Err(mpsc::TryRecvError::Disconnected) => {
+                panic!("wut? noone allowed you to disconnect!")
             }
         }
     }
@@ -814,30 +813,30 @@ impl Gui {
 
         let msg = self.buffered_msg.take_unwrap();
         match msg {
-            FetchPlayToken => self.fetch_play_token(),
-            SetPlayToken(pt) => self.set_play_token(pt),
-            UpdateMixes(m) => self.set_mixes(m),
-            GetMixes(s) => self.get_mixes(s),
-            PlayMix(i) => self.play_mix(i),
-            PlayTrack(t) => self.play_track(t),
-            ReportCurrentTrack => self.report_current_track(),
-            TogglePlaying => self.toggle_playing(),
-            SetBuffering(b) => self.set_buffering(b),
-            NextTrack => self.next_track(),
-            SkipTrack => self.skip_track(),
-            SetPic(i, d) => self.set_pic(i, d),
-            SetCurrentPic(d) => self.set_current_pic(d),
-            SetProgress(p) => self.set_progress(p),
-            Notify(m) => self.notify(m.as_slice()),
-            StartTimers => self.start_timers(),
-            PauseTimers => self.pause_timers(),
+            GuiUpdateMessage::FetchPlayToken => self.fetch_play_token(),
+            GuiUpdateMessage::SetPlayToken(pt) => self.set_play_token(pt),
+            GuiUpdateMessage::UpdateMixes(m) => self.set_mixes(m),
+            GuiUpdateMessage::GetMixes(s) => self.get_mixes(s),
+            GuiUpdateMessage::PlayMix(i) => self.play_mix(i),
+            GuiUpdateMessage::PlayTrack(t) => self.play_track(t),
+            GuiUpdateMessage::ReportCurrentTrack => self.report_current_track(),
+            GuiUpdateMessage::TogglePlaying => self.toggle_playing(),
+            GuiUpdateMessage::SetBuffering(b) => self.set_buffering(b),
+            GuiUpdateMessage::NextTrack => self.next_track(),
+            GuiUpdateMessage::SkipTrack => self.skip_track(),
+            GuiUpdateMessage::SetPic(i, d) => self.set_pic(i, d),
+            GuiUpdateMessage::SetCurrentPic(d) => self.set_current_pic(d),
+            GuiUpdateMessage::SetProgress(p) => self.set_progress(p),
+            GuiUpdateMessage::Notify(m) => self.notify(m.as_slice()),
+            GuiUpdateMessage::StartTimers => self.start_timers(),
+            GuiUpdateMessage::PauseTimers => self.pause_timers(),
         }
 
         return true;
     }
 
     /// This channel is synchronized, call it as often as you want
-    pub fn get_sender<'a>(&'a self) -> &'a comm::Sender<GuiUpdateMessage> {
+    pub fn get_sender<'a>(&'a self) -> &'a mpsc::Sender<GuiUpdateMessage> {
         &self.sender
     }
 }
@@ -875,7 +874,7 @@ extern "C" fn check_gui_g_source(src: *mut GSource) -> gboolean {
 extern "C" fn dispatch_gui_g_source(src: *mut GSource,
         _callback: GSourceFunc, _user_data: gpointer) -> gboolean {
     let gui = unsafe { get_gui_from_src(src) };
-    debug!("dispatching...")
+    debug!("dispatching...");
     while gui.dispatch_message() { }
 
     // Returning 0 here would remove this GSource from the main loop
@@ -889,24 +888,24 @@ extern "C" fn close_button_pressed(_object: *const GtkWidget, user_data: gpointe
 
 extern "C" fn play_button_clicked(_button: *const GtkButton, user_data: gpointer) {
     let (gui, i) = unsafe {
-        let &(gui_ptr, i): &(*const Gui, uint) = mem::transmute(user_data);
+        let &(gui_ptr, i): &(*const Gui, usize) = mem::transmute(user_data);
         (&*gui_ptr, i)
     };
-    gui.get_sender().send(PlayMix(i));
+    gui.get_sender().send(GuiUpdateMessage::PlayMix(i));
 }
 
 extern "C" fn toggle_button_clicked(_button: *const GtkButton, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
-    gui.get_sender().send(TogglePlaying);
+    gui.get_sender().send(GuiUpdateMessage::TogglePlaying);
 }
 
 extern "C" fn skip_button_clicked(_button: *const GtkButton, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
-    gui.get_sender().send(SkipTrack);
+    gui.get_sender().send(GuiUpdateMessage::SkipTrack);
 }
 
 extern "C" fn smart_id_entry_activated(entry: *mut GtkEntry, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
-    let id = unsafe { strraw::from_buf(gtk_entry_get_text(entry) as *const u8) };
-    gui.get_sender().send(GetMixes(id));
+    let id = unsafe { str::from_utf8(gtk_entry_get_text(entry) as *const u8).unwrap().to_string() };
+    gui.get_sender().send(GuiUpdateMessage::GetMixes(id));
 }
