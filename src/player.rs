@@ -33,36 +33,17 @@ impl timerfd::TimerGSourceCallback for ReportCallback {
 
 struct ProgressCallback {
     sender: mpsc::Sender<gui::GuiUpdateMessage>,
-    playbin: *mut GstElement,
 }
 
 impl ProgressCallback {
-    fn new(sender: mpsc::Sender<gui::GuiUpdateMessage>, playbin: *mut GstElement) -> ProgressCallback {
-        ProgressCallback { sender: sender, playbin: playbin }
+    fn new(sender: mpsc::Sender<gui::GuiUpdateMessage>) -> ProgressCallback {
+        ProgressCallback { sender: sender }
     }
 }
 
 impl timerfd::TimerGSourceCallback for ProgressCallback {
     fn callback(&mut self, _timer: &mut timerfd::Timer) -> bool {
-        let mut current_position = 0;
-        let mut current_duration = 0;
-
-        let success_position = unsafe {
-            gst_element_query_position(
-                self.playbin, GST_FORMAT_TIME, &mut current_position)
-        };
-
-        let success_duration = unsafe {
-            gst_element_query_duration(
-                self.playbin, GST_FORMAT_TIME, &mut current_duration)
-        };
-
-        if success_duration != 0 && success_position != 0 {
-            self.sender.send(gui::GuiUpdateMessage::SetProgress(Some((current_position, current_duration))));
-        } else {
-            self.sender.send(gui::GuiUpdateMessage::SetProgress(None));
-        }
-
+        self.sender.send(gui::GuiUpdateMessage::UpdateProgress);
         true
     }
 }
@@ -229,7 +210,7 @@ impl Player {
         self.report_timer.get_mut_ref().mut_timer().start();
 
         if self.progress_timer.is_none() {
-            let pc = Box::new(ProgressCallback::new(sender, self.playbin));
+            let pc = Box::new(ProgressCallback::new(sender));
             let mut pt = timerfd::TimerGSource::new(pc as Box<timerfd::TimerGSourceCallback+Send>);
             pt.attach(context);
             pt.mut_timer().set_interval(1, 1 * 1000);
@@ -252,6 +233,27 @@ impl Player {
     pub fn stop_timers(&mut self) {
         self.report_timer = None;
         self.progress_timer = None;
+    }
+
+    pub fn get_progress_info(&self) -> Option<(i64, i64)> {
+        let mut current_position = 0;
+        let mut current_duration = 0;
+
+        let success_position = unsafe {
+            gst_element_query_position(
+                self.playbin, GST_FORMAT_TIME, &mut current_position)
+        };
+
+        let success_duration = unsafe {
+            gst_element_query_duration(
+                self.playbin, GST_FORMAT_TIME, &mut current_duration)
+        };
+
+        if success_duration != 0 && success_position != 0 {
+            Some((current_position, current_duration))
+        } else {
+            None
+        }
     }
 }
 

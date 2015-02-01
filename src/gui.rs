@@ -66,7 +66,7 @@ pub enum GuiUpdateMessage {
     SkipTrack,
     SetPic(usize, Vec<u8>),
     SetCurrentPic(Vec<u8>),
-    SetProgress(Option<(i64, i64)>),
+    UpdateProgress,
     Notify(String),
     StartTimers,
     PauseTimers,
@@ -785,6 +785,10 @@ impl Gui {
         }
     }
 
+    fn update_progress(&mut self) {
+        self.set_progress(self.player.get_progress_info());
+    }
+
     pub fn test_receive(&mut self) -> bool {
         if self.buffered_msg.is_some() {
             return true;
@@ -826,7 +830,7 @@ impl Gui {
             GuiUpdateMessage::SkipTrack => self.skip_track(),
             GuiUpdateMessage::SetPic(i, d) => self.set_pic(i, d),
             GuiUpdateMessage::SetCurrentPic(d) => self.set_current_pic(d),
-            GuiUpdateMessage::SetProgress(p) => self.set_progress(p),
+            GuiUpdateMessage::UpdateProgress => self.update_progress(),
             GuiUpdateMessage::Notify(m) => self.notify(m.as_slice()),
             GuiUpdateMessage::StartTimers => self.start_timers(),
             GuiUpdateMessage::PauseTimers => self.pause_timers(),
