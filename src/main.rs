@@ -19,14 +19,13 @@ extern crate hyper;
 extern crate timerfd;
 
 use std::os;
-use std::thread;
 
 mod api;
 mod gui;
 mod player;
 mod webinterface;
 
-pub fn my_main() {
+pub fn main() {
     let mut gui = gui::Gui::new();
     gui.init(os::args());
 
@@ -35,11 +34,4 @@ pub fn my_main() {
     gui.get_sender().send(gui::GuiUpdateMessage::GetMixes("tags:folk:recent".to_string()));
 
     gui.run();
-}
-
-pub fn main() {
-    // XXX is this still needed??
-    thread::Thread::scoped(|| {
-        my_main();
-    });
 }
