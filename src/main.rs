@@ -1,5 +1,10 @@
 #![feature(collections)]
 #![feature(core)]
+#![feature(io)]
+#![feature(libc)]
+#![feature(os)]
+#![feature(rustc_private)]
+#![feature(std_misc)]
 #![feature(unsafe_destructor)]
 
 #[macro_use]
