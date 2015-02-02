@@ -1,7 +1,7 @@
 use std::old_io;
 use std::str;
 
-use serialize::json;
+use rustc_serialize::json;
 
 use hyper;
 use hyper::header;
@@ -61,7 +61,7 @@ fn get_data_from_url(u: url::Url) -> hyper::HttpResult<Vec<u8>> {
 
 fn get_json_from_url(u: url::Url) -> hyper::HttpResult<json::Json> {
     let data = try!(get_data_from_url(u));
-    Ok(json::from_str(str::from_utf8(data.as_slice()).unwrap()).unwrap())
+    Ok(json::Json::from_str(str::from_utf8(data.as_slice()).unwrap()).unwrap())
 }
 
 pub fn get_mix_set(smart_id: &str) -> hyper::HttpResult<json::Json> {

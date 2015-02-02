@@ -12,3 +12,4 @@ path = "../timerfd"
 [dependencies]
 hyper = "*"
 url = "*"
+rustc-serialize = "*"

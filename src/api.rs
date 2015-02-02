@@ -1,5 +1,5 @@
-use serialize::Decodable;
-use serialize::json;
+use rustc_serialize::Decodable;
+use rustc_serialize::json;
 
 fn maybe_extract_from_json_object<T: Decodable>(
         obj: &json::Object, id: &String) -> Option<T> {
@@ -63,7 +63,7 @@ impl <T> Response<T> {
     }
 }
 
-#[derive(Decodable, Clone)]
+#[derive(RustcDecodable, Clone)]
 pub struct CoverUrls {
     pub sq56: String,
     pub sq100: String,
@@ -83,7 +83,7 @@ impl CoverUrls {
     }
 }
 
-#[derive(Decodable, Clone)]
+#[derive(RustcDecodable, Clone)]
 pub struct Mix {
     pub id: u32,
     pub path: String,
@@ -129,7 +129,7 @@ impl Mix {
     }
 }
 
-#[derive(Decodable)]
+#[derive(RustcDecodable)]
 pub struct MixSet {
     pub mixes: Vec<Mix>,
     pub smart_id: String,
@@ -158,7 +158,7 @@ impl MixSet {
     }
 }
 
-#[derive(Clone, Decodable)]
+#[derive(Clone, RustcDecodable)]
 pub struct Track {
     pub id: u32,
     pub name: String,
@@ -171,7 +171,7 @@ pub struct Track {
     pub url: String,
 }
 
-#[derive(Decodable)]
+#[derive(RustcDecodable)]
 pub struct PlayState {
     pub at_beginning: bool,
     pub at_last_track: bool,

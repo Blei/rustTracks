@@ -4,7 +4,7 @@
 extern crate log;
 
 extern crate libc;
-extern crate serialize;
+extern crate "rustc-serialize" as rustc_serialize;
 extern crate url;
 
 extern crate gtk;
