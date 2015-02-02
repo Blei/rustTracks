@@ -327,7 +327,7 @@ impl Gui {
         if !self.initialized {
             let args2;
             unsafe {
-                args2 = gtk_init_with_args(args.clone());
+                args2 = gtk_init_with_args_2(args.clone());
                 self.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
                 gtk_window_set_default_size(self.main_window as *mut GtkWindow, 400, 500);
                 let destroy = rffi::CString::from_slice(b"destroy");
@@ -510,7 +510,7 @@ impl Gui {
         let message_c_str = rffi::CString::from_slice(message.as_bytes());
         unsafe {
             gtk_statusbar_push(self.status_bar as *mut GtkStatusbar,
-                               *self.status_bar_ci.get_ref(), message_c_str.as_ptr())
+                               *self.status_bar_ci.as_ref().unwrap(), message_c_str.as_ptr());
         }
     }
 
@@ -522,7 +522,7 @@ impl Gui {
 
         debug!("fetching play token");
         let sender = self.sender.clone();
-        thread::Thread::spawn(|| {
+        thread::Thread::spawn(move || {
             let pt_json = match webinterface::get_play_token() {
                 Ok(ptj) => ptj,
                 Err(io_err) => {
@@ -534,7 +534,7 @@ impl Gui {
             match pt.contents {
                 Some(pt) => sender.send(GuiUpdateMessage::SetPlayToken(pt)),
                 None => sender.send(GuiUpdateMessage::Notify("Playtoken could not be obtained".to_string()))
-            }
+            };
         });
     }
 
@@ -558,7 +558,7 @@ impl Gui {
                 // Fetch cover pic
                 let sender = self.sender.clone();
                 let pic_url_str = mixes[i].cover_urls.sq133.clone();
-                thread::Thread::spawn(|| {
+                thread::Thread::spawn(move || {
                     let pic_data = match webinterface::get_data_from_url_str(pic_url_str.as_slice()) {
                         Ok(pd) => pd,
                         Err(io_err) => {
@@ -580,7 +580,7 @@ impl Gui {
     fn get_mixes(&self, smart_id: String) {
         debug!("getting mixes for smart id '{}'", smart_id);
         let sender = self.get_sender().clone();
-        thread::Thread::spawn(|| {
+        thread::Thread::spawn(move || {
             let mix_set_json = match webinterface::get_mix_set(smart_id.as_slice()) {
                 Ok(msj) => msj,
                 Err(io_err) => {
@@ -592,7 +592,7 @@ impl Gui {
             match mix_set.contents {
                 Some(ms) => sender.send(GuiUpdateMessage::UpdateMixes(ms.mixes)),
                 None => sender.send(GuiUpdateMessage::Notify("Mix list could not be obtained".to_string()))
-            }
+            };
         });
     }
 
@@ -604,14 +604,14 @@ impl Gui {
             self.current_mix_index = Some(i);
             let mix = self.mix_entries[i].mix.clone();
             debug!("playing mix with name `{}`", mix.name);
-            let pt = self.play_token.get_ref().clone();
+            let pt = self.play_token.as_ref().unwrap().clone();
             self.player.pause();
 
             // Fetch cover pic
-            self.current_image.get_mut_ref().reset();
+            self.current_image.as_mut().unwrap().reset();
             let sender = self.sender.clone();
             let pic_url_str = mix.cover_urls.sq250.clone();
-            thread::Thread::spawn(|| {
+            thread::Thread::spawn(move || {
                 let pic_data = match webinterface::get_data_from_url_str(pic_url_str.as_slice()) {
                     Ok(pd) => pd,
                     Err(io_err) => {
@@ -624,7 +624,7 @@ impl Gui {
 
             // Actually play
             let sender = self.sender.clone();
-            thread::Thread::spawn(|| {
+            thread::Thread::spawn(move || {
                 let play_state_json = match webinterface::get_play_state(&pt, &mix) {
                     Ok(psj) => psj,
                     Err(io_err) => {
@@ -634,11 +634,9 @@ impl Gui {
                 };
                 let play_state = api::parse_play_state_response(&play_state_json);
                 match play_state.contents {
-                    Some(ps) => {
-                        sender.send(GuiUpdateMessage::PlayTrack(ps.track));
-                    }
+                    Some(ps) => sender.send(GuiUpdateMessage::PlayTrack(ps.track)),
                     None => sender.send(GuiUpdateMessage::Notify("Could not start playing mix".to_string()))
-                }
+                };
             });
 
             unsafe {
@@ -663,11 +661,11 @@ impl Gui {
         debug!("reporting current track");
         let (pt, ti, mi) =
             (
-                self.play_token.get_ref().clone(),
-                self.mix_entries[*self.current_mix_index.get_ref()].mix.id,
-                self.current_track.get_ref().id,
+                self.play_token.as_ref().unwrap().clone(),
+                self.mix_entries[*self.current_mix_index.as_ref().unwrap()].mix.id,
+                self.current_track.as_ref().unwrap().id,
             );
-        thread::Thread::spawn(|| {
+        thread::Thread::spawn(move || {
             webinterface::report_track(&pt, ti, mi);
         });
     }
@@ -693,8 +691,8 @@ impl Gui {
         let mix = self.mix_entries[i].mix.clone();
         debug!("getting next track of mix with name `{}`", mix.name);
         let sender = self.sender.clone();
-        let pt = self.play_token.get_ref().clone();
-        thread::Thread::spawn(|| {
+        let pt = self.play_token.as_ref().unwrap().clone();
+        thread::Thread::spawn(move || {
             let next_track_json = match webinterface::get_next_track(&pt, &mix) {
                 Ok(ntj) => ntj,
                 Err(io_err) => {
@@ -706,7 +704,7 @@ impl Gui {
             match play_state.contents {
                 Some(ps) => sender.send(GuiUpdateMessage::PlayTrack(ps.track)),
                 None => sender.send(GuiUpdateMessage::Notify("Next track could not be obtained".to_string()))
-            }
+            };
         });
     }
 
@@ -718,8 +716,8 @@ impl Gui {
         let mix = self.mix_entries[i].mix.clone();
         debug!("skipping track of mix with name `{}`", mix.name);
         let sender = self.sender.clone();
-        let pt = self.play_token.get_ref().clone();
-        thread::Thread::spawn(|| {
+        let pt = self.play_token.as_ref().unwrap().clone();
+        thread::Thread::spawn(move || {
             let skip_track_json = match webinterface::get_skip_track(&pt, &mix) {
                 Ok(stj) => stj,
                 Err(io_err) => {
@@ -730,8 +728,8 @@ impl Gui {
             let play_state = api::parse_play_state_response(&skip_track_json);
             match play_state.contents {
                 Some(ps) => sender.send(GuiUpdateMessage::PlayTrack(ps.track)),
-                None => sender.send(GuiUpdateMessage::Notify("Could not skip track".to_string()))
-            }
+                None => sender.send(GuiUpdateMessage::Notify("Could not skip track".to_string())),
+            };
         });
     }
 
@@ -740,12 +738,12 @@ impl Gui {
             warn!("set_pic: index {} is out of range, only {} mix_entries",
                   i, self.mix_entries.len());
         } else {
-            self.mix_entries.get_mut(i).set_pic_from_data(pic_data.as_slice());
+            self.mix_entries[i].set_pic_from_data(pic_data.as_slice());
         }
     }
 
     fn set_current_pic(&mut self, pic_data: Vec<u8>) {
-        self.current_image.get_mut_ref().set_image_from_data(pic_data.as_slice());
+        self.current_image.as_ref().unwrap().set_image_from_data(pic_data.as_slice());
     }
 
     fn start_timers(&mut self) {

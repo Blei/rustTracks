@@ -3,7 +3,7 @@ use rustc_serialize::json;
 
 fn maybe_extract_from_json_object<T: Decodable>(
         obj: &json::Object, id: &String) -> Option<T> {
-    let found = match obj.find(id) {
+    let found = match obj.get(id) {
         Some(s) => s.clone(),
         None => return None,
     };

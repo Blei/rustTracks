@@ -34,7 +34,7 @@ fn make_skip_track_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
                             pt.s, mix.id).as_slice()).unwrap()
 }
 
-fn make_report_url(pt: &api::PlayToken, track_id: usize, mix_id: usize) -> url::Url {
+fn make_report_url(pt: &api::PlayToken, track_id: u32, mix_id: u32) -> url::Url {
     url::Url::parse(format!("http://8tracks.com/sets/{}/report.json?track_id={}&mix_id={}",
                             pt.s, track_id, mix_id).as_slice()).unwrap()
 }
@@ -85,7 +85,7 @@ pub fn get_skip_track(pt: &api::PlayToken, mix: &api::Mix) -> hyper::HttpResult<
 }
 
 /// Ignoring returned json, if it doesn't work, meh
-pub fn report_track(pt: &api::PlayToken, track_id: usize, mix_id: usize) {
+pub fn report_track(pt: &api::PlayToken, track_id: u32, mix_id: u32) {
     let resp = get_json_from_url(make_report_url(pt, track_id, mix_id));
     debug!("reported track, response was {:?}", resp);
 }
