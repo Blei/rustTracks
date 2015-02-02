@@ -1,5 +1,4 @@
 use std::fmt;
-use std::old_io;
 use std::str;
 
 use rustc_serialize::json;
@@ -16,7 +15,7 @@ struct ApiVersionHeader;
 
 impl header::Header for ApiVersionHeader {
     fn header_name() -> &'static str { "X-Api-Version" }
-    fn parse_header(raw: &[Vec<u8>]) -> Option<ApiVersionHeader> {
+    fn parse_header(_: &[Vec<u8>]) -> Option<ApiVersionHeader> {
         // TODO fix this up, maybe
         None
     }
@@ -33,7 +32,7 @@ struct ApiKeyHeader;
 
 impl header::Header for ApiKeyHeader {
     fn header_name() -> &'static str { "X-Api-Key" }
-    fn parse_header(raw: &[Vec<u8>]) -> Option<ApiKeyHeader> {
+    fn parse_header(_: &[Vec<u8>]) -> Option<ApiKeyHeader> {
         // TODO fix this, maybe
         None
     }
@@ -47,8 +46,8 @@ impl header::HeaderFormat for ApiKeyHeader {
 
 
 fn make_mixes_url(smart_id: &str) -> url::Url {
-    url::Url::parse(format!("http://8tracks.com/mix_sets/{}.json?include=mixes[likes_count]",
-                           smart_id).as_slice()).unwrap()
+    url::Url::parse(&format!("http://8tracks.com/mix_sets/{}.json?include=mixes[likes_count]",
+                             smart_id)[]).unwrap()
 }
 
 fn make_play_token_url() -> url::Url {
@@ -56,23 +55,23 @@ fn make_play_token_url() -> url::Url {
 }
 
 fn make_play_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
-    url::Url::parse(format!("http://8tracks.com/sets/{}/play.json?mix_id={}",
-                            pt.s, mix.id).as_slice()).unwrap()
+    url::Url::parse(&format!("http://8tracks.com/sets/{}/play.json?mix_id={}",
+                             pt.s, mix.id)[]).unwrap()
 }
 
 fn make_next_track_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
-    url::Url::parse(format!("http://8tracks.com/sets/{}/next.json?mix_id={}",
-                            pt.s, mix.id).as_slice()).unwrap()
+    url::Url::parse(&format!("http://8tracks.com/sets/{}/next.json?mix_id={}",
+                             pt.s, mix.id)[]).unwrap()
 }
 
 fn make_skip_track_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
-    url::Url::parse(format!("http://8tracks.com/sets/{}/skip.json?mix_id={}",
-                            pt.s, mix.id).as_slice()).unwrap()
+    url::Url::parse(&format!("http://8tracks.com/sets/{}/skip.json?mix_id={}",
+                             pt.s, mix.id)[]).unwrap()
 }
 
 fn make_report_url(pt: &api::PlayToken, track_id: u32, mix_id: u32) -> url::Url {
-    url::Url::parse(format!("http://8tracks.com/sets/{}/report.json?track_id={}&mix_id={}",
-                            pt.s, track_id, mix_id).as_slice()).unwrap()
+    url::Url::parse(&format!("http://8tracks.com/sets/{}/report.json?track_id={}&mix_id={}",
+                             pt.s, track_id, mix_id)[]).unwrap()
 }
 
 pub fn get_data_from_url_str(s: &str) -> hyper::HttpResult<Vec<u8>> {

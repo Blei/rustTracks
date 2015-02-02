@@ -1,3 +1,5 @@
+#![feature(collections)]
+#![feature(core)]
 #![feature(unsafe_destructor)]
 
 #[macro_use]
