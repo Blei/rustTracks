@@ -1,5 +1,6 @@
 use libc;
 
+use std::ffi as rffi;
 use std::iter;
 use std::ptr;
 use std::mem;
@@ -119,9 +120,10 @@ impl MixEntry {
         let (widget, image) = unsafe {
             let entry_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
 
-            let label = mix.name.with_c_str(|c_str| {
-                gtk_label_new(c_str)
-            });
+            let label = {
+                let text = rffi::CString::from_slice(mix.name.as_bytes());
+                gtk_label_new(text.as_ptr());
+            };
             gtk_box_pack_start(as_box(entry_box), label, 1, 1, 0);
             gtk_label_set_line_wrap(label as *mut GtkLabel, 1);
             gtk_label_set_line_wrap_mode(label as *mut GtkLabel, PANGO_WRAP_WORD_CHAR);
@@ -134,16 +136,18 @@ impl MixEntry {
             let button_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
             gtk_box_pack_end(as_box(entry_box), button_box, 0, 0, 0);
 
-            let button = "Play".with_c_str(|p| {
-                gtk_button_new_with_label(p)
-            });
+            let button = {
+                let text = rffi::CString::from_slice(b"Play");
+                gtk_button_new_with_label(text.as_ptr())
+            };
             gtk_box_pack_end(as_box(button_box), button, 1, 0, 0);
-            "clicked".with_c_str(|c| {
+            {
+                let signal = rffi::CString::from_slice(b"clicked");
                 g_signal_connect(button as gpointer,
-                                 c,
+                                 signal.as_ptr(),
                                  Some(mem::transmute(play_button_clicked)),
                                  mem::transmute::<&(*mut Gui, usize), gpointer>(mix_table_entry));
-            });
+            }
 
             (entry_box, image)
         };
@@ -274,9 +278,8 @@ impl Gui {
             PLAY_ICON_NAME
         };
         unsafe {
-            let image = icon_name.with_c_str(|cstr|
-                gtk_image_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
-            );
+            let name = rffi::CString::from_slice(icon_name.as_bytes());
+            let image = gtk_image_new_from_icon_name(name.as_ptr(), GTK_ICON_SIZE_BUTTON);
             gtk_button_set_image(self.toggle_button as *mut GtkButton, image);
         }
     }
@@ -294,10 +297,9 @@ impl Gui {
     fn update_track_info(&mut self) {
         match self.current_track {
             None => {
+                let empty = rffi::CString::from_slice(b"");
                 unsafe {
-                    "".with_c_str(|cstr|
-                        gtk_label_set_text(self.info_label as *mut GtkLabel, cstr)
-                    );
+                    gtk_label_set_text(self.info_label as *mut GtkLabel, empty.as_ptr());
                 }
             }
             Some(ref track) => {
@@ -313,10 +315,9 @@ impl Gui {
                     }
                     None => ()
                 }
+                let text_c_str = rffi::CString::from_slice(text);
                 unsafe {
-                    text.as_slice().with_c_str(|cstr|
-                        gtk_label_set_text(self.info_label as *mut GtkLabel, cstr)
-                    );
+                    gtk_label_set_text(self.info_label as *mut GtkLabel, text_c_str.as_ptr());
                 }
             }
         }
@@ -329,12 +330,11 @@ impl Gui {
                 args2 = gtk_init_with_args(args.clone());
                 self.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
                 gtk_window_set_default_size(self.main_window as *mut GtkWindow, 400, 500);
-                "destroy".with_c_str(|destroy| {
-                    g_signal_connect(self.main_window as gpointer,
-                                     destroy,
-                                     Some(mem::transmute(close_button_pressed)),
-                                     mem::transmute::<&Gui, gpointer>(self));
-                });
+                let destroy = rffi::CString::from_slice(b"destroy");
+                g_signal_connect(self.main_window as gpointer,
+                                 destroy.as_ptr(),
+                                 Some(mem::transmute(close_button_pressed)),
+                                 mem::transmute::<&Gui, gpointer>(self));
                 let icon = get_icon_pixbuf();
                 gtk_window_set_icon(self.main_window as *mut GtkWindow, icon);
                 gdk_pixbuf_unref(icon);
@@ -345,7 +345,8 @@ impl Gui {
                 // First page: All Playlists
                 let main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
 
-                let playlist_label = "Playlists".with_c_str(|pl| gtk_label_new(pl));
+                let playlists_c_str = rffi::CString::from_slice(b"Playlists");
+                let playlist_label = gtk_label_new(playlists_c_str);
                 self.playlists_notebook_index = gtk_notebook_append_page(
                     self.main_notebook as *mut GtkNotebook,
                     main_box,
@@ -368,36 +369,41 @@ impl Gui {
 
                 let smart_id_ordering_combo = gtk_combo_box_text_new();
                 gtk_box_pack_start(as_box(smart_id_box), smart_id_ordering_combo, 0, 0, 0);
-                "popular".with_c_str(|cstr|
+                {
+                    let popular_c_str = rffi::CString::from_slice(b"popular");
                     gtk_combo_box_text_append(smart_id_ordering_combo as *mut GtkComboBoxText,
-                                     ptr::null(), cstr)
-                );
-                "new".with_c_str(|cstr|
+                                              ptr::null(), popular_c_str.as_ptr());
+                }
+                {
+                    let new_c_str = rffi::CString::from_slice(b"new");
                     gtk_combo_box_text_append(smart_id_ordering_combo as *mut GtkComboBoxText,
-                                     ptr::null(), cstr)
-                );
+                                              ptr::null(), new_c_str.as_ptr());
+                }
                 gtk_combo_box_set_active(smart_id_ordering_combo as *mut GtkComboBox,
                                          MixesOrdering::Popular as libc::c_int);
 
                 let smart_id_entry = gtk_entry_new();
                 gtk_box_pack_start(as_box(smart_id_box), smart_id_entry, 1, 1, 0);
-                "activate".with_c_str(|cstr|
+                {
+                    let activate_c_str = rffi::CString::from_slice(b"activate");
                     g_signal_connect(smart_id_entry as gpointer,
-                                     cstr,
+                                     activate_c_str.as_ptr(),
                                      Some(mem::transmute(smart_id_entry_activated)),
-                                     mem::transmute::<&Gui, gpointer>(self))
-                );
+                                     mem::transmute::<&Gui, gpointer>(self));
+                }
 
                 self.status_bar = gtk_statusbar_new();
-                self.status_bar_ci = "rusttracks".with_c_str(|cstr|
-                    Some(gtk_statusbar_get_context_id(self.status_bar as *mut GtkStatusbar, cstr))
-                );
+                let rusttracks_c_str = rffi::CString::from_slice(b"rusttracks");
+                self.status_bar_ci = Some(gtk_statusbar_get_context_id(
+                        self.status_bar as *mut GtkStatusbar,
+                        rusttracks_c_str.as_ptr()));
                 gtk_box_pack_start(as_box(main_box), self.status_bar, 0, 0, 0);
 
                 // Second page: Current Playlist
                 let current_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
 
-                let current_label = "Current".with_c_str(|pl| gtk_label_new(pl));
+                let current_c_str = rffi::CString::from_slice(b"Current");
+                let current_label = gtk_label_new(current_c_str.as_ptr());
                 self.current_notebook_index = gtk_notebook_append_page(
                     self.main_notebook as *mut GtkNotebook,
                     current_box,
@@ -415,33 +421,29 @@ impl Gui {
                 let control_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
                 gtk_container_add(current_box as *mut GtkContainer, control_box);
 
-                self.toggle_button = PAUSE_ICON_NAME.with_c_str(|cstr|
-                    gtk_button_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
-                );
-                "clicked".with_c_str(|clicked| {
-                    g_signal_connect(self.toggle_button as gpointer,
-                                     clicked,
-                                     Some(mem::transmute(toggle_button_clicked)),
-                                     mem::transmute::<&Gui, gpointer>(self));
-                });
+                let pause_icon_c_str = rffi::CString::from_slice(PAUSE_ICON_NAME.as_bytes());
+                self.toggle_button = gtk_button_new_from_icon_name(
+                    pause_icon_c_str.as_ptr(), GTK_ICON_SIZE_BUTTON);
+                let clicked_c_str = rffi::CString::from_slice(b"clicked");
+                g_signal_connect(self.toggle_button as gpointer,
+                                 clicked_c_str.as_ptr(),
+                                 Some(mem::transmute(toggle_button_clicked)),
+                                 mem::transmute::<&Gui, gpointer>(self));
                 gtk_box_pack_start(control_box as *mut GtkBox, self.toggle_button, 0, 0, 0);
 
-                self.skip_button = SKIP_ICON_NAME.with_c_str(|cstr|
-                    gtk_button_new_from_icon_name(cstr, GTK_ICON_SIZE_BUTTON)
-                );
-                "clicked".with_c_str(|clicked| {
-                    g_signal_connect(self.skip_button as gpointer,
-                                     clicked,
-                                     Some(mem::transmute(skip_button_clicked)),
-                                     mem::transmute::<&Gui, gpointer>(self));
-                });
+                let skip_icon_c_str = rffi::CString::from_slice(SKIP_ICON_NAME.as_bytes());
+                self.skip_button = gtk_button_new_from_icon_name(
+                    skip_icon_c_str.as_ptr(), GTK_ICON_SIZE_BUTTON);
+                g_signal_connect(self.skip_button as gpointer,
+                                 clicked_c_str.as_ptr(),
+                                 Some(mem::transmute(skip_button_clicked)),
+                                 mem::transmute::<&Gui, gpointer>(self));
                 gtk_box_pack_start(as_box(control_box), self.skip_button, 0, 0, 0);
 
                 self.progress_bar = gtk_progress_bar_new();
                 gtk_box_pack_end(as_box(control_box), self.progress_bar, 1, 1, 0);
-                "".with_c_str(|cstr|
-                    gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar, cstr)
-                );
+                let empty = rffi::CString::from_slice(b"");
+                gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar, empty.as_ptr());
                 gtk_progress_bar_set_show_text(self.progress_bar as *mut GtkProgressBar, 1);
 
                 self.control_buttons_set_sensitive(false);
@@ -505,11 +507,10 @@ impl Gui {
         }
 
         info!("Notification message: {}", message);
+        let message_c_str = rffi::CString::from_slice(message.as_bytes());
         unsafe {
-            message.with_c_str(|cstr|
-                gtk_statusbar_push(self.status_bar as *mut GtkStatusbar,
-                                   *self.status_bar_ci.get_ref(), cstr)
-            );
+            gtk_statusbar_push(self.status_bar as *mut GtkStatusbar,
+                               *self.status_bar_ci.get_ref(), message_c_str.as_ptr())
         }
     }
 
@@ -767,18 +768,19 @@ impl Gui {
                 let text = format!("{}:{:02} / {}:{:02}",
                                    pos_sec / 60, pos_sec % 60,
                                    dur_sec / 60, dur_sec % 60);
+                let text_c_str = rffi::CString::from_slice(text.as_bytes());
                 unsafe {
-                    text.with_c_str(|cstr|
-                        gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar, cstr)
-                    );
-                    gtk_progress_bar_set_fraction(self.progress_bar as *mut GtkProgressBar, fraction);
+                    gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar,
+                                              text_c_str.as_ptr());
+                    gtk_progress_bar_set_fraction(self.progress_bar as *mut GtkProgressBar,
+                                                  fraction);
                 }
             }
             None => {
+                let empty_c_str = rffi::CString::from_slice(b"");
                 unsafe {
-                    "".with_c_str(|cstr|
-                        gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar, cstr)
-                    );
+                    gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar,
+                                              empty_c_str.as_ptr());
                     gtk_progress_bar_set_fraction(self.progress_bar as *mut GtkProgressBar, 0.);
                 }
             }
@@ -815,7 +817,7 @@ impl Gui {
             return false;
         }
 
-        let msg = self.buffered_msg.take_unwrap();
+        let msg = self.buffered_msg.take().unwrap();
         match msg {
             GuiUpdateMessage::FetchPlayToken => self.fetch_play_token(),
             GuiUpdateMessage::SetPlayToken(pt) => self.set_play_token(pt),
@@ -910,6 +912,6 @@ extern "C" fn skip_button_clicked(_button: *const GtkButton, user_data: gpointer
 
 extern "C" fn smart_id_entry_activated(entry: *mut GtkEntry, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
-    let id = unsafe { str::from_utf8(gtk_entry_get_text(entry) as *const u8).unwrap().to_string() };
+    let id = unsafe { str::from_c_str(gtk_entry_get_text(entry) as *const i8).to_string() };
     gui.get_sender().send(GuiUpdateMessage::GetMixes(id));
 }

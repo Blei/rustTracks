@@ -1,3 +1,4 @@
+use std::ffi as rffi;
 use std::mem;
 use std::ptr;
 use std::str;
@@ -84,11 +85,10 @@ impl Player {
         };
         self.gui_sender = Some(Box::new(gui_sender));
         unsafe {
-            "playbin".with_c_str(|c_str| {
-                PLAYBIN_ELEMENT_NAME.with_c_str(|rtpb| {
-                    self.playbin = gst_element_factory_make(c_str, rtpb);
-                });
-            });
+            let literal_playbin = rffi::CString::from_slice(b"playbin");
+            let elem_name = rffi::CString::from_slice(PLAYBIN_ELEMENT_NAME.as_bytes());
+            self.playbin = gst_element_factory_make(
+                literal_playbin.as_ptr(), elem_name.as_ptr());
             if self.playbin.is_null() {
                 panic!("failed to create playbin");
             }
@@ -96,7 +96,7 @@ impl Player {
             let bus = gst_pipeline_get_bus(self.playbin as *mut GstPipeline);
             gst_bus_add_watch(bus, Some(bus_callback),
                               mem::transmute::<&mpsc::Sender<gui::GuiUpdateMessage>, gpointer>(
-                                  &**self.gui_sender.get_ref()));
+                                  &**self.gui_sender.as_ref().unwrap()));
         }
         self.state = PlayState::NoUri;
         args2
@@ -105,12 +105,10 @@ impl Player {
     pub fn set_uri(&mut self, uri: &str) {
         self.stop();
         unsafe {
-            "uri".with_c_str(|property_c_str| {
-                uri.with_c_str(|uri_c_str| {
-                    g_object_set(self.playbin as gpointer,
-                        property_c_str, uri_c_str, ptr::null::<gchar>());
-                });
-            });
+            let literal_uri = rffi::CString::from_slice(b"uri");
+            let uri_c_str = rffi::CString::from_slice(uri.as_bytes());
+            g_object_set(self.playbin as gpointer,
+                         literal_uri.as_ptr(), uri_c_str.as_ptr(), ptr::null::<gchar>());
         }
         self.state = PlayState::WaitToPlay;
     }
@@ -207,7 +205,7 @@ impl Player {
             rt.mut_timer().set_oneshot(30 * 1000);
             self.report_timer = Some(rt);
         }
-        self.report_timer.get_mut_ref().mut_timer().start();
+        self.report_timer.as_mut().unwrap().mut_timer().start();
 
         if self.progress_timer.is_none() {
             let pc = Box::new(ProgressCallback::new(sender));
@@ -216,7 +214,7 @@ impl Player {
             pt.mut_timer().set_interval(1, 1 * 1000);
             self.progress_timer = Some(pt);
         }
-        self.progress_timer.get_mut_ref().mut_timer().start();
+        self.progress_timer.as_mut().unwrap().mut_timer().start();
     }
 
     pub fn pause_timers(&mut self) {
@@ -284,7 +282,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             if name_ptr.is_null() {
                 "null-name".to_string()
             } else {
-                let name = str::from_utf8(name_ptr as *const u8).unwrap().to_string();
+                let name = str::from_c_str(name_ptr as *const i8).to_string();
                 g_free(name_ptr as gpointer);
                 name
             }
@@ -299,8 +297,8 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
 
-            let err_msg = str::from_utf8((*err).message as *const u8).unwrap();
-            let info = str::from_utf8(dbg_info as *const u8).unwrap();
+            let err_msg = str::from_c_str((*err).message as *const i8);
+            let info = str::from_c_str(dbg_info as *const i8);
 
             error!("ERROR from element {}: {}", name, err_msg);
             error!("Debugging info: {}", info);
@@ -317,8 +315,8 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
 
                 gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-                let err_msg = str::from_utf8((*err).message as *const u8).unwrap();
-                let info = str::from_utf8(dbg_info as *const u8).unwrap();
+                let err_msg = str::from_c_str((*err).message as *const i8);
+                let info = str::from_c_str(dbg_info as *const i8);
 
                 warn!("WARNING from element {}: {}", name, err_msg);
                 warn!("Debugging info: {}", info);
@@ -334,8 +332,8 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
 
                 gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-                let err_msg = str::from_utf8((*err).message as *const u8).unwrap();
-                let info = str::from_utf8(dbg_info as *const u8).unwrap();
+                let err_msg = str::from_c_str((*err).message as *const i8);
+                let info = str::from_c_str(dbg_info as *const i8);
 
                 info!("INFO from element {}: {}", name, err_msg);
                 info!("Debugging info: {}", info);
@@ -355,7 +353,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
                     &mut new_state, ptr::null_mut());
                 if log_enabled!(log::DEBUG) {
                     let new_state_name = gst_element_state_get_name(new_state);
-                    let name = str::from_utf8(new_state_name as *const u8).unwrap();
+                    let name = str::from_c_str(new_state_name as *const i8);
                     debug!("new playbin state: {}", name);
                 }
                 match new_state {
@@ -380,7 +378,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         _ => {
             if log_enabled!(log::DEBUG) {
                 let msg_type_cstr = gst_message_type_get_name((*msg)._type);
-                let msg_type_name = str::from_utf8(msg_type_cstr as *const u8).unwrap();
+                let msg_type_name = str::from_c_str(msg_type_cstr as *const i8);
                 debug!("message of type `{}` from element `{}`", msg_type_name, name);
             }
         }

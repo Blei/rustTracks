@@ -46,11 +46,16 @@ pub fn get_data_from_url_str(s: &str) -> hyper::HttpResult<Vec<u8>> {
 
 fn get_data_from_url(u: url::Url) -> hyper::HttpResult<Vec<u8>> {
     debug!("fetching data from `{}`", u);
+    let cc = header::CacheControl(
+        vec![
+            header::CacheDirective::Extension(
+                "X-Api-Key".to_string(), Some(api::API_KEY.to_string())),
+            header::CacheDirective::Extension(
+                "X-Api-Version".to_string(), Some(api::API_VERSION.to_string())),
+        ]
+    );
     let client = hyper::Client::new();
-    let response = try!(client.get(u)
-        .header(header::CacheDirective::Extension("X-Api-Key".to_string(), api::API_KEY.to_string()))
-        .header(header::CacheDirective::Extension("X-Api-Version".to_string(), api::API_VERSION.to_string()))
-        .send());
+    let response = try!(client.get(u).header(cc).send());
     response.read_to_end().map_err(|io_err| hyper::HttpError::HttpIoError(io_err))
 }
 
@@ -82,5 +87,5 @@ pub fn get_skip_track(pt: &api::PlayToken, mix: &api::Mix) -> hyper::HttpResult<
 /// Ignoring returned json, if it doesn't work, meh
 pub fn report_track(pt: &api::PlayToken, track_id: usize, mix_id: usize) {
     let resp = get_json_from_url(make_report_url(pt, track_id, mix_id));
-    debug!("reported track, response was {}", resp.to_string());
+    debug!("reported track, response was {:?}", resp);
 }
