@@ -122,7 +122,7 @@ impl Mix {
             tracks_count: extract_from_json_object(obj, &"tracks_count".to_string()),
             nsfw: maybe_extract_from_json_object(obj, &"nsfw".to_string()).unwrap_or_default(),
             liked_by_current_user: maybe_extract_from_json_object(obj, &"liked_by_current_user".to_string()).unwrap_or_default(),
-            cover_urls: CoverUrls::from_json(obj.find(&"cover_urls".to_string()).unwrap().clone()),
+            cover_urls: CoverUrls::from_json(obj.get(&"cover_urls".to_string()).unwrap().clone()),
             first_published_at: extract_from_json_object(obj, &"first_published_at".to_string()),
             user_id: extract_from_json_object(obj, &"user_id".to_string()),
         }
@@ -142,7 +142,7 @@ pub struct MixSet {
 impl MixSet {
     pub fn from_json(json: &json::Json) -> MixSet {
         let obj = expect_json_object(json);
-        let mixes_list = match obj.find(&"mixes".to_string()) {
+        let mixes_list = match obj.get(&"mixes".to_string()) {
             Some(&json::Json::Array(ref list)) => list,
             _ => panic!("expected mixes array in mix set, got {:?}", obj)
         };
@@ -189,7 +189,7 @@ impl PlayState {
 
 pub fn parse_mix_set_response(json: &json::Json) -> Response<MixSet> {
     let obj = expect_json_object(json);
-    let mix_set = obj.find(&"mix_set".to_string()).map(|ms| MixSet::from_json(ms));
+    let mix_set = obj.get(&"mix_set".to_string()).map(|ms| MixSet::from_json(ms));
     Response::from_json(json, mix_set)
 }
 
@@ -202,6 +202,6 @@ pub fn parse_play_token_response(json: &json::Json) -> Response<PlayToken> {
 pub fn parse_play_state_response(json: &json::Json) -> Response<PlayState> {
     let obj = expect_json_object(json);
     debug!("play state json {}", json.to_string());
-    let ps = obj.find(&"set".to_string()).map(|set| PlayState::from_json(set.clone()));
+    let ps = obj.get(&"set".to_string()).map(|set| PlayState::from_json(set.clone()));
     Response::from_json(json, ps)
 }

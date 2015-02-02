@@ -122,7 +122,7 @@ impl MixEntry {
 
             let label = {
                 let text = rffi::CString::from_slice(mix.name.as_bytes());
-                gtk_label_new(text.as_ptr());
+                gtk_label_new(text.as_ptr())
             };
             gtk_box_pack_start(as_box(entry_box), label, 1, 1, 0);
             gtk_label_set_line_wrap(label as *mut GtkLabel, 1);
@@ -315,7 +315,7 @@ impl Gui {
                     }
                     None => ()
                 }
-                let text_c_str = rffi::CString::from_slice(text);
+                let text_c_str = rffi::CString::from_slice(text.as_bytes());
                 unsafe {
                     gtk_label_set_text(self.info_label as *mut GtkLabel, text_c_str.as_ptr());
                 }
@@ -346,7 +346,7 @@ impl Gui {
                 let main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
 
                 let playlists_c_str = rffi::CString::from_slice(b"Playlists");
-                let playlist_label = gtk_label_new(playlists_c_str);
+                let playlist_label = gtk_label_new(playlists_c_str.as_ptr());
                 self.playlists_notebook_index = gtk_notebook_append_page(
                     self.main_notebook as *mut GtkNotebook,
                     main_box,
@@ -743,7 +743,7 @@ impl Gui {
     }
 
     fn set_current_pic(&mut self, pic_data: Vec<u8>) {
-        self.current_image.as_ref().unwrap().set_image_from_data(pic_data.as_slice());
+        self.current_image.as_mut().unwrap().set_image_from_data(pic_data.as_slice());
     }
 
     fn start_timers(&mut self) {
@@ -786,7 +786,8 @@ impl Gui {
     }
 
     fn update_progress(&mut self) {
-        self.set_progress(self.player.get_progress_info());
+        let progress = self.player.get_progress_info();
+        self.set_progress(progress);
     }
 
     pub fn test_receive(&mut self) -> bool {
