@@ -1,4 +1,5 @@
 use std::fmt;
+use std::io::Read;
 use std::str;
 
 use rustc_serialize::json;
@@ -10,7 +11,7 @@ use url;
 
 use api;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ApiVersionHeader;
 
 impl header::Header for ApiVersionHeader {
@@ -27,7 +28,7 @@ impl header::HeaderFormat for ApiVersionHeader {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ApiKeyHeader;
 
 impl header::Header for ApiKeyHeader {
@@ -47,7 +48,7 @@ impl header::HeaderFormat for ApiKeyHeader {
 
 fn make_mixes_url(smart_id: &str) -> url::Url {
     url::Url::parse(&format!("http://8tracks.com/mix_sets/{}.json?include=mixes[likes_count]",
-                             smart_id)[]).unwrap()
+                             smart_id)[..]).unwrap()
 }
 
 fn make_play_token_url() -> url::Url {
@@ -56,22 +57,22 @@ fn make_play_token_url() -> url::Url {
 
 fn make_play_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
     url::Url::parse(&format!("http://8tracks.com/sets/{}/play.json?mix_id={}",
-                             pt.s, mix.id)[]).unwrap()
+                             pt.s, mix.id)[..]).unwrap()
 }
 
 fn make_next_track_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
     url::Url::parse(&format!("http://8tracks.com/sets/{}/next.json?mix_id={}",
-                             pt.s, mix.id)[]).unwrap()
+                             pt.s, mix.id)[..]).unwrap()
 }
 
 fn make_skip_track_url(pt: &api::PlayToken, mix: &api::Mix) -> url::Url {
     url::Url::parse(&format!("http://8tracks.com/sets/{}/skip.json?mix_id={}",
-                             pt.s, mix.id)[]).unwrap()
+                             pt.s, mix.id)[..]).unwrap()
 }
 
 fn make_report_url(pt: &api::PlayToken, track_id: u32, mix_id: u32) -> url::Url {
     url::Url::parse(&format!("http://8tracks.com/sets/{}/report.json?track_id={}&mix_id={}",
-                             pt.s, track_id, mix_id)[]).unwrap()
+                             pt.s, track_id, mix_id)[..]).unwrap()
 }
 
 pub fn get_data_from_url_str(s: &str) -> hyper::HttpResult<Vec<u8>> {
@@ -86,12 +87,16 @@ fn get_data_from_url(u: url::Url) -> hyper::HttpResult<Vec<u8>> {
                             .header(ApiVersionHeader)
                             .header(ApiKeyHeader)
                             .send());
-    response.read_to_end().map_err(|io_err| hyper::HttpError::HttpIoError(io_err))
+    let mut data = Vec::new();
+    match response.read_to_end(&mut data){
+        Ok(_) => Ok(data),
+        Err(io_err) => Err(hyper::HttpError::HttpIoError(io_err)),
+    }
 }
 
 fn get_json_from_url(u: url::Url) -> hyper::HttpResult<json::Json> {
     let data = try!(get_data_from_url(u));
-    let s = str::from_utf8(&data[]).unwrap();
+    let s = str::from_utf8(&data[..]).unwrap();
     debug!("got data: {}", s);
     Ok(json::Json::from_str(s).unwrap())
 }

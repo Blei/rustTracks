@@ -1,10 +1,8 @@
 use libc;
 
 use std::ffi as rffi;
-use std::iter;
 use std::ptr;
 use std::mem;
-use std::str;
 use std::sync::mpsc;
 use std::thread;
 
@@ -13,6 +11,7 @@ use gtk::*;
 
 use api;
 use player;
+use utils;
 use webinterface;
 
 fn as_box<T>(in_ptr: *mut T) -> *mut GtkBox {
@@ -121,7 +120,7 @@ impl MixEntry {
             let entry_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
 
             let label = {
-                let text = rffi::CString::from_slice(mix.name.as_bytes());
+                let text = rffi::CString::new(mix.name.as_bytes()).unwrap();
                 gtk_label_new(text.as_ptr())
             };
             gtk_box_pack_start(as_box(entry_box), label, 1, 1, 0);
@@ -137,12 +136,12 @@ impl MixEntry {
             gtk_box_pack_end(as_box(entry_box), button_box, 0, 0, 0);
 
             let button = {
-                let text = rffi::CString::from_slice(b"Play");
+                let text = rffi::CString::new("Play").unwrap();
                 gtk_button_new_with_label(text.as_ptr())
             };
             gtk_box_pack_end(as_box(button_box), button, 1, 0, 0);
             {
-                let signal = rffi::CString::from_slice(b"clicked");
+                let signal = rffi::CString::new("clicked").unwrap();
                 g_signal_connect(button as gpointer,
                                  signal.as_ptr(),
                                  Some(mem::transmute(play_button_clicked)),
@@ -278,7 +277,7 @@ impl Gui {
             PLAY_ICON_NAME
         };
         unsafe {
-            let name = rffi::CString::from_slice(icon_name.as_bytes());
+            let name = rffi::CString::new(icon_name.as_bytes()).unwrap();
             let image = gtk_image_new_from_icon_name(name.as_ptr(), GTK_ICON_SIZE_BUTTON);
             gtk_button_set_image(self.toggle_button as *mut GtkButton, image);
         }
@@ -297,25 +296,25 @@ impl Gui {
     fn update_track_info(&mut self) {
         match self.current_track {
             None => {
-                let empty = rffi::CString::from_slice(b"");
+                let empty = rffi::CString::new("").unwrap();
                 unsafe {
                     gtk_label_set_text(self.info_label as *mut GtkLabel, empty.as_ptr());
                 }
             }
             Some(ref track) => {
                 let mut text = String::new();
-                text.push_str(format!("'{}' by {}", track.name, track.performer).as_slice());
+                text.push_str(&format!("'{}' by {}", track.name, track.performer)[..]);
                 match track.release_name {
                     Some(ref rn) => {
-                        text.push_str(format!("\nAlbum: {}", *rn).as_slice());
+                        text.push_str(&format!("\nAlbum: {}", *rn)[..]);
                         match track.year {
-                            Some(year) => text.push_str(format!(" ({})", year).as_slice()),
+                            Some(year) => text.push_str(&format!(" ({})", year)[..]),
                             None => ()
                         }
                     }
                     None => ()
                 }
-                let text_c_str = rffi::CString::from_slice(text.as_bytes());
+                let text_c_str = rffi::CString::new(text).unwrap();
                 unsafe {
                     gtk_label_set_text(self.info_label as *mut GtkLabel, text_c_str.as_ptr());
                 }
@@ -330,7 +329,7 @@ impl Gui {
                 args2 = gtk_init_with_args_2(args.clone());
                 self.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
                 gtk_window_set_default_size(self.main_window as *mut GtkWindow, 400, 500);
-                let destroy = rffi::CString::from_slice(b"destroy");
+                let destroy = rffi::CString::new("destroy").unwrap();
                 g_signal_connect(self.main_window as gpointer,
                                  destroy.as_ptr(),
                                  Some(mem::transmute(close_button_pressed)),
@@ -345,7 +344,7 @@ impl Gui {
                 // First page: All Playlists
                 let main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
 
-                let playlists_c_str = rffi::CString::from_slice(b"Playlists");
+                let playlists_c_str = rffi::CString::new("Playlists").unwrap();
                 let playlist_label = gtk_label_new(playlists_c_str.as_ptr());
                 self.playlists_notebook_index = gtk_notebook_append_page(
                     self.main_notebook as *mut GtkNotebook,
@@ -370,12 +369,12 @@ impl Gui {
                 let smart_id_ordering_combo = gtk_combo_box_text_new();
                 gtk_box_pack_start(as_box(smart_id_box), smart_id_ordering_combo, 0, 0, 0);
                 {
-                    let popular_c_str = rffi::CString::from_slice(b"popular");
+                    let popular_c_str = rffi::CString::new("popular").unwrap();
                     gtk_combo_box_text_append(smart_id_ordering_combo as *mut GtkComboBoxText,
                                               ptr::null(), popular_c_str.as_ptr());
                 }
                 {
-                    let new_c_str = rffi::CString::from_slice(b"new");
+                    let new_c_str = rffi::CString::new("new").unwrap();
                     gtk_combo_box_text_append(smart_id_ordering_combo as *mut GtkComboBoxText,
                                               ptr::null(), new_c_str.as_ptr());
                 }
@@ -385,7 +384,7 @@ impl Gui {
                 let smart_id_entry = gtk_entry_new();
                 gtk_box_pack_start(as_box(smart_id_box), smart_id_entry, 1, 1, 0);
                 {
-                    let activate_c_str = rffi::CString::from_slice(b"activate");
+                    let activate_c_str = rffi::CString::new("activate").unwrap();
                     g_signal_connect(smart_id_entry as gpointer,
                                      activate_c_str.as_ptr(),
                                      Some(mem::transmute(smart_id_entry_activated)),
@@ -393,7 +392,7 @@ impl Gui {
                 }
 
                 self.status_bar = gtk_statusbar_new();
-                let rusttracks_c_str = rffi::CString::from_slice(b"rusttracks");
+                let rusttracks_c_str = rffi::CString::new("rusttracks").unwrap();
                 self.status_bar_ci = Some(gtk_statusbar_get_context_id(
                         self.status_bar as *mut GtkStatusbar,
                         rusttracks_c_str.as_ptr()));
@@ -402,7 +401,7 @@ impl Gui {
                 // Second page: Current Playlist
                 let current_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
 
-                let current_c_str = rffi::CString::from_slice(b"Current");
+                let current_c_str = rffi::CString::new("Current").unwrap();
                 let current_label = gtk_label_new(current_c_str.as_ptr());
                 self.current_notebook_index = gtk_notebook_append_page(
                     self.main_notebook as *mut GtkNotebook,
@@ -421,17 +420,17 @@ impl Gui {
                 let control_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
                 gtk_container_add(current_box as *mut GtkContainer, control_box);
 
-                let pause_icon_c_str = rffi::CString::from_slice(PAUSE_ICON_NAME.as_bytes());
+                let pause_icon_c_str = rffi::CString::new(PAUSE_ICON_NAME).unwrap();
                 self.toggle_button = gtk_button_new_from_icon_name(
                     pause_icon_c_str.as_ptr(), GTK_ICON_SIZE_BUTTON);
-                let clicked_c_str = rffi::CString::from_slice(b"clicked");
+                let clicked_c_str = rffi::CString::new("clicked").unwrap();
                 g_signal_connect(self.toggle_button as gpointer,
                                  clicked_c_str.as_ptr(),
                                  Some(mem::transmute(toggle_button_clicked)),
                                  mem::transmute::<&Gui, gpointer>(self));
                 gtk_box_pack_start(control_box as *mut GtkBox, self.toggle_button, 0, 0, 0);
 
-                let skip_icon_c_str = rffi::CString::from_slice(SKIP_ICON_NAME.as_bytes());
+                let skip_icon_c_str = rffi::CString::new(SKIP_ICON_NAME).unwrap();
                 self.skip_button = gtk_button_new_from_icon_name(
                     skip_icon_c_str.as_ptr(), GTK_ICON_SIZE_BUTTON);
                 g_signal_connect(self.skip_button as gpointer,
@@ -442,7 +441,7 @@ impl Gui {
 
                 self.progress_bar = gtk_progress_bar_new();
                 gtk_box_pack_end(as_box(control_box), self.progress_bar, 1, 1, 0);
-                let empty = rffi::CString::from_slice(b"");
+                let empty = rffi::CString::new("").unwrap();
                 gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar, empty.as_ptr());
                 gtk_progress_bar_set_show_text(self.progress_bar as *mut GtkProgressBar, 1);
 
@@ -507,7 +506,7 @@ impl Gui {
         }
 
         info!("Notification message: {}", message);
-        let message_c_str = rffi::CString::from_slice(message.as_bytes());
+        let message_c_str = rffi::CString::new(message).unwrap();
         unsafe {
             gtk_statusbar_push(self.status_bar as *mut GtkStatusbar,
                                *self.status_bar_ci.as_ref().unwrap(), message_c_str.as_ptr());
@@ -522,7 +521,7 @@ impl Gui {
 
         debug!("fetching play token");
         let sender = self.sender.clone();
-        thread::Thread::spawn(move || {
+        thread::spawn(move || {
             let pt_json = match webinterface::get_play_token() {
                 Ok(ptj) => ptj,
                 Err(io_err) => {
@@ -544,12 +543,13 @@ impl Gui {
     }
 
     fn set_mixes(&mut self, mixes: Vec<api::Mix>) {
-        self.mix_index_table = (0..mixes.len()).map(|i| (self as *mut Gui, i)).collect();
+        let self_ptr = self as *mut Gui;
+        self.mix_index_table = (0..mixes.len()).map(|i| (self_ptr, i)).collect();
         self.mix_entries.clear();
         debug!("setting mixes, length {}", mixes.len());
         unsafe {
             clear_gtk_container(self.mixes_box as *mut GtkContainer);
-            for i in iter::range(0, mixes.len()) {
+            for i in 0..mixes.len() {
                 let mix_entry = MixEntry::new(mixes[i].clone(), &self.mix_index_table[i]);
                 gtk_box_pack_start(as_box(self.mixes_box),
                     mix_entry.widget, 0, 1, 0);
@@ -558,8 +558,8 @@ impl Gui {
                 // Fetch cover pic
                 let sender = self.sender.clone();
                 let pic_url_str = mixes[i].cover_urls.sq133.clone();
-                thread::Thread::spawn(move || {
-                    let pic_data = match webinterface::get_data_from_url_str(pic_url_str.as_slice()) {
+                thread::spawn(move || {
+                    let pic_data = match webinterface::get_data_from_url_str(&pic_url_str[..]) {
                         Ok(pd) => pd,
                         Err(io_err) => {
                             sender.send(GuiUpdateMessage::Notify(format!("Could not get picture: `{}`", io_err)));
@@ -580,8 +580,8 @@ impl Gui {
     fn get_mixes(&self, smart_id: String) {
         debug!("getting mixes for smart id '{}'", smart_id);
         let sender = self.get_sender().clone();
-        thread::Thread::spawn(move || {
-            let mix_set_json = match webinterface::get_mix_set(smart_id.as_slice()) {
+        thread::spawn(move || {
+            let mix_set_json = match webinterface::get_mix_set(&smart_id[..]) {
                 Ok(msj) => msj,
                 Err(io_err) => {
                     sender.send(GuiUpdateMessage::Notify(format!("Could not get mix list: `{}`", io_err)));
@@ -611,8 +611,8 @@ impl Gui {
             self.current_image.as_mut().unwrap().reset();
             let sender = self.sender.clone();
             let pic_url_str = mix.cover_urls.sq250.clone();
-            thread::Thread::spawn(move || {
-                let pic_data = match webinterface::get_data_from_url_str(pic_url_str.as_slice()) {
+            thread::spawn(move || {
+                let pic_data = match webinterface::get_data_from_url_str(&pic_url_str[..]) {
                     Ok(pd) => pd,
                     Err(io_err) => {
                         sender.send(GuiUpdateMessage::Notify(format!("Could not get picture: `{}`", io_err)));
@@ -624,7 +624,7 @@ impl Gui {
 
             // Actually play
             let sender = self.sender.clone();
-            thread::Thread::spawn(move || {
+            thread::spawn(move || {
                 let play_state_json = match webinterface::get_play_state(&pt, &mix) {
                     Ok(psj) => psj,
                     Err(io_err) => {
@@ -650,7 +650,7 @@ impl Gui {
         debug!("playing track `{}`", track.name);
         self.set_current_track(track.clone());
         debug!("setting uri to `{}`", track.track_file_stream_url);
-        self.player.set_uri(track.track_file_stream_url.as_slice());
+        self.player.set_uri(&track.track_file_stream_url[..]);
         self.player.play();
         self.update_play_button_icon();
         self.control_buttons_set_sensitive(true);
@@ -665,7 +665,7 @@ impl Gui {
                 self.mix_entries[*self.current_mix_index.as_ref().unwrap()].mix.id,
                 self.current_track.as_ref().unwrap().id,
             );
-        thread::Thread::spawn(move || {
+        thread::spawn(move || {
             webinterface::report_track(&pt, ti, mi);
         });
     }
@@ -692,7 +692,7 @@ impl Gui {
         debug!("getting next track of mix with name `{}`", mix.name);
         let sender = self.sender.clone();
         let pt = self.play_token.as_ref().unwrap().clone();
-        thread::Thread::spawn(move || {
+        thread::spawn(move || {
             let next_track_json = match webinterface::get_next_track(&pt, &mix) {
                 Ok(ntj) => ntj,
                 Err(io_err) => {
@@ -717,7 +717,7 @@ impl Gui {
         debug!("skipping track of mix with name `{}`", mix.name);
         let sender = self.sender.clone();
         let pt = self.play_token.as_ref().unwrap().clone();
-        thread::Thread::spawn(move || {
+        thread::spawn(move || {
             let skip_track_json = match webinterface::get_skip_track(&pt, &mix) {
                 Ok(stj) => stj,
                 Err(io_err) => {
@@ -738,12 +738,12 @@ impl Gui {
             warn!("set_pic: index {} is out of range, only {} mix_entries",
                   i, self.mix_entries.len());
         } else {
-            self.mix_entries[i].set_pic_from_data(pic_data.as_slice());
+            self.mix_entries[i].set_pic_from_data(&pic_data[..]);
         }
     }
 
     fn set_current_pic(&mut self, pic_data: Vec<u8>) {
-        self.current_image.as_mut().unwrap().set_image_from_data(pic_data.as_slice());
+        self.current_image.as_mut().unwrap().set_image_from_data(&pic_data[..]);
     }
 
     fn start_timers(&mut self) {
@@ -766,7 +766,7 @@ impl Gui {
                 let text = format!("{}:{:02} / {}:{:02}",
                                    pos_sec / 60, pos_sec % 60,
                                    dur_sec / 60, dur_sec % 60);
-                let text_c_str = rffi::CString::from_slice(text.as_bytes());
+                let text_c_str = rffi::CString::new(text).unwrap();
                 unsafe {
                     gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar,
                                               text_c_str.as_ptr());
@@ -775,7 +775,7 @@ impl Gui {
                 }
             }
             None => {
-                let empty_c_str = rffi::CString::from_slice(b"");
+                let empty_c_str = rffi::CString::new("").unwrap();
                 unsafe {
                     gtk_progress_bar_set_text(self.progress_bar as *mut GtkProgressBar,
                                               empty_c_str.as_ptr());
@@ -832,7 +832,7 @@ impl Gui {
             GuiUpdateMessage::SetPic(i, d) => self.set_pic(i, d),
             GuiUpdateMessage::SetCurrentPic(d) => self.set_current_pic(d),
             GuiUpdateMessage::UpdateProgress => self.update_progress(),
-            GuiUpdateMessage::Notify(m) => self.notify(m.as_slice()),
+            GuiUpdateMessage::Notify(m) => self.notify(&m[..]),
             GuiUpdateMessage::StartTimers => self.start_timers(),
             GuiUpdateMessage::PauseTimers => self.pause_timers(),
         }
@@ -911,6 +911,6 @@ extern "C" fn skip_button_clicked(_button: *const GtkButton, user_data: gpointer
 
 extern "C" fn smart_id_entry_activated(entry: *mut GtkEntry, user_data: gpointer) {
     let gui: &mut Gui = unsafe { &mut *(user_data as *mut Gui) };
-    let id = unsafe { str::from_c_str(gtk_entry_get_text(entry) as *const i8).to_string() };
+    let id = unsafe { utils::ptr_to_string(gtk_entry_get_text(entry) as *const i8) };
     gui.get_sender().send(GuiUpdateMessage::GetMixes(id));
 }

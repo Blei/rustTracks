@@ -1,7 +1,6 @@
 use std::ffi as rffi;
 use std::mem;
 use std::ptr;
-use std::str;
 use std::sync::mpsc;
 
 use log;
@@ -12,6 +11,7 @@ use gtk::ffi::*;
 use timerfd;
 
 use gui;
+use utils;
 
 static PLAYBIN_ELEMENT_NAME: &'static str = "rusttracks-playbin";
 
@@ -85,8 +85,8 @@ impl Player {
         };
         self.gui_sender = Some(Box::new(gui_sender));
         unsafe {
-            let literal_playbin = rffi::CString::from_slice(b"playbin");
-            let elem_name = rffi::CString::from_slice(PLAYBIN_ELEMENT_NAME.as_bytes());
+            let literal_playbin = rffi::CString::new("playbin").unwrap();
+            let elem_name = rffi::CString::new(PLAYBIN_ELEMENT_NAME).unwrap();
             self.playbin = gst_element_factory_make(
                 literal_playbin.as_ptr(), elem_name.as_ptr());
             if self.playbin.is_null() {
@@ -105,8 +105,8 @@ impl Player {
     pub fn set_uri(&mut self, uri: &str) {
         self.stop();
         unsafe {
-            let literal_uri = rffi::CString::from_slice(b"uri");
-            let uri_c_str = rffi::CString::from_slice(uri.as_bytes());
+            let literal_uri = rffi::CString::new("uri").unwrap();
+            let uri_c_str = rffi::CString::new(uri).unwrap();
             g_object_set(self.playbin as gpointer,
                          literal_uri.as_ptr(), uri_c_str.as_ptr(), ptr::null::<gchar>());
         }
@@ -282,7 +282,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             if name_ptr.is_null() {
                 "null-name".to_string()
             } else {
-                let name = str::from_c_str(name_ptr as *const i8).to_string();
+                let name = utils::ptr_to_string(name_ptr as *const i8).to_string();
                 g_free(name_ptr as gpointer);
                 name
             }
@@ -297,8 +297,8 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
 
-            let err_msg = str::from_c_str((*err).message as *const i8);
-            let info = str::from_c_str(dbg_info as *const i8);
+            let err_msg = utils::ptr_to_string((*err).message as *const i8);
+            let info = utils::ptr_to_string(dbg_info as *const i8);
 
             error!("ERROR from element {}: {}", name, err_msg);
             error!("Debugging info: {}", info);
@@ -315,8 +315,8 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
 
                 gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-                let err_msg = str::from_c_str((*err).message as *const i8);
-                let info = str::from_c_str(dbg_info as *const i8);
+                let err_msg = utils::ptr_to_string((*err).message as *const i8);
+                let info = utils::ptr_to_string(dbg_info as *const i8);
 
                 warn!("WARNING from element {}: {}", name, err_msg);
                 warn!("Debugging info: {}", info);
@@ -332,8 +332,8 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
 
                 gst_message_parse_error(msg, &mut err, &mut dbg_info);
 
-                let err_msg = str::from_c_str((*err).message as *const i8);
-                let info = str::from_c_str(dbg_info as *const i8);
+                let err_msg = utils::ptr_to_string((*err).message as *const i8);
+                let info = utils::ptr_to_string(dbg_info as *const i8);
 
                 info!("INFO from element {}: {}", name, err_msg);
                 info!("Debugging info: {}", info);
@@ -347,13 +347,13 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
             gui_sender.send(gui::GuiUpdateMessage::NextTrack);
         }
         GST_MESSAGE_STATE_CHANGED => {
-            if name.as_slice() == PLAYBIN_ELEMENT_NAME {
+            if &name[..] == PLAYBIN_ELEMENT_NAME {
                 let mut new_state = 0;
                 gst_message_parse_state_changed(msg, ptr::null_mut(),
                     &mut new_state, ptr::null_mut());
                 if log_enabled!(log::DEBUG) {
                     let new_state_name = gst_element_state_get_name(new_state);
-                    let name = str::from_c_str(new_state_name as *const i8);
+                    let name = utils::ptr_to_string(new_state_name as *const i8);
                     debug!("new playbin state: {}", name);
                 }
                 match new_state {
@@ -378,7 +378,7 @@ extern "C" fn bus_callback(_bus: *mut GstBus, msg: *mut GstMessage, data: gpoint
         _ => {
             if log_enabled!(log::DEBUG) {
                 let msg_type_cstr = gst_message_type_get_name((*msg)._type);
-                let msg_type_name = str::from_c_str(msg_type_cstr as *const i8);
+                let msg_type_name = utils::ptr_to_string(msg_type_cstr as *const i8);
                 debug!("message of type `{}` from element `{}`", msg_type_name, name);
             }
         }

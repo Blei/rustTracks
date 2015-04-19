@@ -9,7 +9,10 @@ path = "../dumb-gtk"
 [dependencies.timerfd]
 path = "../timerfd"
 
+[dependencies.hyper]
+git = "https://github.com/hyperium/hyper.git"
+
 [dependencies]
-hyper = "*"
 url = "*"
 rustc-serialize = "*"
+libc = "*"
